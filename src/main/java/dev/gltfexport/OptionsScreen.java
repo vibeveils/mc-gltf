@@ -85,6 +85,8 @@ public final class OptionsScreen extends Screen {
 			case "rigEntities" -> "Entity rigs";
 			case "tints" -> "Tints (vertex colours)";
 			case "weldEdges" -> "Weld corners";
+			case "mergeFaces" -> "Merge faces";
+			case "normals" -> "Normals";
 			case "unlit" -> "Unlit materials";
 			case "partSize" -> "Split files";
 			case "tileSize" -> "Mesh tiles";

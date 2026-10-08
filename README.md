@@ -67,6 +67,8 @@ Config**, or `/gltf config`), or with `/gltf set <option> <value>`, which also s
 | `closeEdges` | on | Keep block faces on the selection border so the model is closed. Off culls them against the real blocks outside, like the game does |
 | `rigEntities` | on | Entities as skinned meshes with a skeleton. Off exports plain static meshes |
 | `tints` | on | Grass/foliage/water/dye colours as vertex colours. Off exports untinted geometry |
+| `mergeFaces` | on | Greedy meshing: flat runs of the same block face become one big quad with the texture repeating per block. Typically cuts block geometry by 10-50x |
+| `normals` | on | Write vertex normals. Off: viewers/Blender use flat shading and files are ~30% smaller |
 | `weldEdges` | off | Also join vertices where faces meet at an angle (block corners), averaging normals. For flat shading. See note below |
 | `unlit` | off | `KHR_materials_unlit` materials for a flat in-game look |
 | `partSize` | 512 | Split into several files every N blocks (0 = one file) |

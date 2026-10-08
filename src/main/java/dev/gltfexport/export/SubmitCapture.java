@@ -183,16 +183,13 @@ public final class SubmitCapture implements InvocationHandler {
 
 	@SuppressWarnings({"rawtypes", "unchecked"})
 	private void submitModel(Model model, Object[] args, Object renderType, TextureAtlasSprite sprite, int tint, Matrix4f pose) {
+		// submitModel(model, state, poseStack, ...): the state is the argument right after the model. It can be a
+		// boxed number (a chest's lid openness is a Float), so don't filter by type.
 		Object state = null;
-		boolean afterModel = false;
-		for (Object a : args) {
-			if (a == model) {
-				afterModel = true;
-				continue;
-			}
-			if (afterModel && a != null && !(a instanceof PoseStack) && !(a instanceof Number) && !(a instanceof Boolean)
-					&& !isRenderType(a) && !(a instanceof TextureAtlasSprite)) {
-				state = a;
+		for (int i = 0; i + 1 < args.length; i++) {
+			if (args[i] == model) {
+				Object next = args[i + 1];
+				if (!(next instanceof PoseStack) && !isRenderType(next)) state = next;
 				break;
 			}
 		}

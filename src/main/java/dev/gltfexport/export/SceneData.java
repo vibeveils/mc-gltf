@@ -130,6 +130,189 @@ public final class SceneData {
 		}
 
 		/**
+		 * Greedy meshing for grid-aligned faces: coplanar neighbouring full-block faces that show the same texture the
+		 * same way round (same UV direction and phase) with the same colour are merged into one large rectangle whose
+		 * UVs repeat the texture once per block. Visually identical; far fewer vertices. Faces that don't fit the
+		 * pattern (partial faces, odd UVs, rotated variants, tint gradients) are left untouched. Static geometry only.
+		 * Must run before {@link #weld}.
+		 */
+		public void mergeCoplanar() {
+			if (welded || vertices == 0 || joint.size() != 0 || quads < 2) return;
+			int n = vertices / 4;
+			java.util.LinkedHashMap<String, java.util.HashSet<Long>> groups = new java.util.LinkedHashMap<>();
+			java.util.HashMap<String, float[]> groupInfo = new java.util.HashMap<>();
+			boolean[] merged = new boolean[n];
+			for (int q = 0; q < n; q++) {
+				float[] info = new float[14];
+				String key = gridKey(q, info);
+				if (key == null) continue;
+				merged[q] = true;
+				groups.computeIfAbsent(key, k -> new java.util.HashSet<>()).add(pack((int) info[12], (int) info[13]));
+				groupInfo.putIfAbsent(key, info);
+			}
+			int candidates = 0;
+			for (boolean m : merged) if (m) candidates++;
+			if (candidates < 2) return;
+
+			// keep the quads that can't be merged
+			Prim out = new Prim();
+			float[] p = new float[12], t = new float[8];
+			int[] c = new int[4];
+			for (int q = 0; q < n; q++) {
+				if (merged[q]) continue;
+				for (int i = 0; i < 4; i++) {
+					int v = q * 4 + i;
+					for (int k = 0; k < 3; k++) p[i * 3 + k] = pos.getFloat(v * 3 + k);
+					t[i * 2] = uv.getFloat(v * 2);
+					t[i * 2 + 1] = uv.getFloat(v * 2 + 1);
+					c[i] = color.getInt(v);
+				}
+				out.addQuad(p, t, -1, c);
+			}
+
+			for (var e : groups.entrySet()) {
+				float[] g = groupInfo.get(e.getKey());
+				int axis = (int) g[0], ax = (int) g[1], bx = (int) g[2];
+				float nSign = g[3], plane = g[4];
+				float gua = g[5], gub = g[6], gva = g[7], gvb = g[8], uo = g[9], vo = g[10];
+				int rgb = (int) g[11];
+				java.util.HashSet<Long> cells = e.getValue();
+				java.util.ArrayList<Long> sorted = new java.util.ArrayList<>(cells);
+				sorted.sort((x, y) -> {
+					int bx1 = (int) (x >> 32), by1 = (int) (y >> 32);
+					if (bx1 != by1) return Integer.compare(bx1, by1);
+					return Integer.compare((int) (long) x, (int) (long) y);
+				});
+				java.util.HashSet<Long> used = new java.util.HashSet<>();
+				for (long cell : sorted) {
+					if (used.contains(cell)) continue;
+					int a0 = (int) cell, b0 = (int) (cell >> 32);
+					int w = 1;
+					while (cells.contains(pack(a0 + w, b0)) && !used.contains(pack(a0 + w, b0))) w++;
+					int h = 1;
+					grow:
+					while (true) {
+						for (int da = 0; da < w; da++) {
+							long next = pack(a0 + da, b0 + h);
+							if (!cells.contains(next) || used.contains(next)) break grow;
+						}
+						h++;
+					}
+					for (int db = 0; db < h; db++) for (int da = 0; da < w; da++) used.add(pack(a0 + da, b0 + db));
+					int[][] corners = {{a0, b0}, {a0 + w, b0}, {a0 + w, b0 + h}, {a0, b0 + h}};
+					for (int i = 0; i < 4; i++) {
+						float[] xyz = new float[3];
+						xyz[axis] = plane;
+						xyz[ax] = corners[i][0];
+						xyz[bx] = corners[i][1];
+						p[i * 3] = xyz[0];
+						p[i * 3 + 1] = xyz[1];
+						p[i * 3 + 2] = xyz[2];
+						t[i * 2] = uo + gua * corners[i][0] + gub * corners[i][1];
+						t[i * 2 + 1] = vo + gva * corners[i][0] + gvb * corners[i][1];
+					}
+					// keep the original facing: reverse the corner order if it winds the wrong way
+					float e1a = p[3] - p[0], e1b = p[4] - p[1], e1c = p[5] - p[2];
+					float e2a = p[6] - p[0], e2b = p[7] - p[1], e2c = p[8] - p[2];
+					float[] cross = {e1b * e2c - e1c * e2b, e1c * e2a - e1a * e2c, e1a * e2b - e1b * e2a};
+					if (cross[axis] * nSign < 0) {
+						float[] rp = p.clone(), rt = t.clone();
+						for (int i = 0; i < 4; i++) {
+							int j = 3 - i;
+							System.arraycopy(rp, j * 3, p, i * 3, 3);
+							System.arraycopy(rt, j * 2, t, i * 2, 2);
+						}
+					}
+					out.addQuad(p, t, -1, rgb);
+				}
+			}
+
+			pos.clear();
+			nrm.clear();
+			uv.clear();
+			color.clear();
+			idx.clear();
+			copy(out.pos, pos);
+			copy(out.nrm, nrm);
+			copy(out.uv, uv);
+			for (int i = 0; i < out.color.size(); i++) color.add(out.color.getInt(i));
+			for (int i = 0; i < out.idx.size(); i++) idx.add(out.idx.getInt(i));
+			vertices = out.vertices;
+			quads = out.quads;
+		}
+
+		private static long pack(int a, int b) {
+			return (long) b << 32 | (a & 0xFFFFFFFFL);
+		}
+
+		/**
+		 * Describes quad q if it is a 1x1 grid-aligned face whose texture is mapped once per block; returns a grouping
+		 * key, or null if it can't be merged. info receives: axis, aAxis, bAxis, normalSign, plane, gua, gub, gva, gvb,
+		 * uOffset, vOffset, rgb, cellA, cellB.
+		 */
+		private String gridKey(int q, float[] info) {
+			int v0 = q * 4;
+			float nx = nrm.getFloat(v0 * 3), ny = nrm.getFloat(v0 * 3 + 1), nz = nrm.getFloat(v0 * 3 + 2);
+			int axis;
+			float sign;
+			if (Math.abs(nx) > 0.999f) { axis = 0; sign = Math.signum(nx); }
+			else if (Math.abs(ny) > 0.999f) { axis = 1; sign = Math.signum(ny); }
+			else if (Math.abs(nz) > 0.999f) { axis = 2; sign = Math.signum(nz); }
+			else return null;
+			int ax = axis == 0 ? 1 : 0, bx = axis == 2 ? 1 : 2;
+			int rgb = color.getInt(v0);
+			float plane = pos.getFloat(v0 * 3 + axis);
+			float amin = Float.MAX_VALUE, bmin = Float.MAX_VALUE, amax = -Float.MAX_VALUE, bmax = -Float.MAX_VALUE;
+			for (int i = 0; i < 4; i++) {
+				int v = v0 + i;
+				if (color.getInt(v) != rgb) return null;
+				if (Math.abs(pos.getFloat(v * 3 + axis) - plane) > 1e-5f) return null;
+				float a = pos.getFloat(v * 3 + ax), b = pos.getFloat(v * 3 + bx);
+				amin = Math.min(amin, a);
+				amax = Math.max(amax, a);
+				bmin = Math.min(bmin, b);
+				bmax = Math.max(bmax, b);
+			}
+			if (Math.abs(amax - amin - 1) > 1e-5f || Math.abs(bmax - bmin - 1) > 1e-5f) return null;
+			if (Math.abs(amin - Math.round(amin)) > 1e-5f || Math.abs(bmin - Math.round(bmin)) > 1e-5f) return null;
+			// UVs at the three reference corners
+			float[] u = new float[4], w = new float[4]; // index: bit0 = a at max, bit1 = b at max
+			int seen = 0;
+			for (int i = 0; i < 4; i++) {
+				int v = v0 + i;
+				int ia = pos.getFloat(v * 3 + ax) > amin + 0.5f ? 1 : 0;
+				int ib = pos.getFloat(v * 3 + bx) > bmin + 0.5f ? 2 : 0;
+				u[ia | ib] = uv.getFloat(v * 2);
+				w[ia | ib] = uv.getFloat(v * 2 + 1);
+				seen |= 1 << (ia | ib);
+			}
+			if (seen != 15) return null;
+			float gua = u[1] - u[0], gub = u[2] - u[0], gva = w[1] - w[0], gvb = w[2] - w[0];
+			// affine check on the 4th corner
+			if (Math.abs(u[0] + gua + gub - u[3]) > 1e-4f || Math.abs(w[0] + gva + gvb - w[3]) > 1e-4f) return null;
+			// texture must be mapped exactly once per block, along the grid axes
+			if (!unitAxis(gua, gub) || !unitAxis(gva, gvb) || (Math.abs(gua) > 0.5f) == (Math.abs(gva) > 0.5f)) return null;
+			gua = Math.round(gua);
+			gub = Math.round(gub);
+			gva = Math.round(gva);
+			gvb = Math.round(gvb);
+			int ia0 = Math.round(amin), ib0 = Math.round(bmin);
+			float uo = u[0] - gua * ia0 - gub * ib0, vo = w[0] - gva * ia0 - gvb * ib0;
+			uo -= (float) Math.floor(uo + 1e-4);
+			vo -= (float) Math.floor(vo + 1e-4);
+			info[0] = axis; info[1] = ax; info[2] = bx; info[3] = sign; info[4] = plane;
+			info[5] = gua; info[6] = gub; info[7] = gva; info[8] = gvb; info[9] = uo; info[10] = vo;
+			info[11] = rgb; info[12] = ia0; info[13] = ib0;
+			return axis + "|" + sign + "|" + Math.round(plane * 4096) + "|" + (int) gua + (int) gub + (int) gva + (int) gvb
+					+ "|" + Math.round(uo * 4096) + "|" + Math.round(vo * 4096) + "|" + rgb;
+		}
+
+		private static boolean unitAxis(float a, float b) {
+			return (Math.abs(Math.abs(a) - 1) < 1e-4f && Math.abs(b) < 1e-4f)
+					|| (Math.abs(Math.abs(b) - 1) < 1e-4f && Math.abs(a) < 1e-4f);
+		}
+
+		/**
 		 * Merges vertices that touch: same position, normal, UV and bone. Faces of neighbouring blocks then share
 		 * their edge vertices and form one connected surface instead of a separate island per face. Vertex colours of
 		 * merged vertices are averaged (so a biome border blends smoothly, like the game's biome blending).

@@ -277,6 +277,7 @@ public final class GlbWriter {
 		for (Map.Entry<MaterialKey, Prim> e : prims.entrySet()) {
 			Prim p = e.getValue();
 			if (p.quads == 0) continue;
+			if (settings.mergeFaces && !skinned) p.mergeCoplanar();
 			p.weld(settings.weldEdges);
 			JsonObject attributes = new JsonObject();
 			float[] pos = p.pos.toFloatArray();
@@ -287,7 +288,9 @@ public final class GlbWriter {
 				max[i % 3] = Math.max(max[i % 3], pos[i]);
 			}
 			attributes.addProperty("POSITION", accessor(writeFloats(pos, ARRAY_BUFFER), FLOAT, p.vertices, "VEC3", min, max));
-			attributes.addProperty("NORMAL", accessor(writeFloats(p.nrm.toFloatArray(), ARRAY_BUFFER), FLOAT, p.vertices, "VEC3", null, null));
+			if (settings.normals) {
+				attributes.addProperty("NORMAL", accessor(writeFloats(p.nrm.toFloatArray(), ARRAY_BUFFER), FLOAT, p.vertices, "VEC3", null, null));
+			}
 			attributes.addProperty("TEXCOORD_0", accessor(writeFloats(p.uv.toFloatArray(), ARRAY_BUFFER), FLOAT, p.vertices, "VEC2", null, null));
 			if (settings.tints && p.tinted) {
 				attributes.addProperty("COLOR_0", colorAccessor(p));

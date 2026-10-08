@@ -43,6 +43,10 @@ public final class ExportSettings {
 	 * shading. glTF keeps one UV per vertex, so vertices with different UVs still stay separate.
 	 */
 	public boolean weldEdges = false;
+	/** Merge coplanar neighbouring block faces with the same texture into large rectangles (greedy meshing). */
+	public boolean mergeFaces = true;
+	/** Write vertex normals. Without them viewers use flat shading, and the file is ~30% smaller. */
+	public boolean normals = true;
 	/** Mark materials KHR_materials_unlit so viewers show the flat in-game look. */
 	public boolean unlit = false;
 	/** Selections wider than this (in X or Z) are split into several .glb files. 0 = never split. */
@@ -68,6 +72,8 @@ public final class ExportSettings {
 		DESCRIPTIONS.put("rigEntities", "Export entities with a skeleton (skinned mesh)");
 		DESCRIPTIONS.put("tints", "Grass/foliage/water/dye colours as vertex colours");
 		DESCRIPTIONS.put("weldEdges", "Also join vertices where faces meet at an angle (for flat shading)");
+		DESCRIPTIONS.put("mergeFaces", "Merge flat runs of the same block face into big quads (much smaller files)");
+		DESCRIPTIONS.put("normals", "Write normals (off = flat shading, smaller file)");
 		DESCRIPTIONS.put("unlit", "Unlit materials (flat in-game look in viewers)");
 		DESCRIPTIONS.put("partSize", "Split into several files every N blocks (0 = one file)");
 		DESCRIPTIONS.put("tileSize", "Block mesh node size in blocks");
@@ -76,7 +82,7 @@ public final class ExportSettings {
 	}
 
 	public static final String[] NAMES = {"entities", "blockEntities", "fluids", "includePlayer", "closeEdges",
-			"rigEntities", "tints", "weldEdges", "unlit", "showSelection", "verboseLog"};
+			"rigEntities", "tints", "weldEdges", "mergeFaces", "normals", "unlit", "showSelection", "verboseLog"};
 	public static final String[] INT_NAMES = {"partSize", "tileSize"};
 
 	public boolean set(String name, boolean value) {
@@ -120,6 +126,8 @@ public final class ExportSettings {
 			case "rigEntities" -> v -> rigEntities = v;
 			case "tints" -> v -> tints = v;
 			case "weldEdges" -> v -> weldEdges = v;
+			case "mergeFaces" -> v -> mergeFaces = v;
+			case "normals" -> v -> normals = v;
 			case "unlit" -> v -> unlit = v;
 			case "showSelection" -> v -> showSelection = v;
 			case "verboseLog" -> v -> verboseLog = v;
@@ -137,6 +145,8 @@ public final class ExportSettings {
 			case "rigEntities" -> () -> rigEntities;
 			case "tints" -> () -> tints;
 			case "weldEdges" -> () -> weldEdges;
+			case "mergeFaces" -> () -> mergeFaces;
+			case "normals" -> () -> normals;
 			case "unlit" -> () -> unlit;
 			case "showSelection" -> () -> showSelection;
 			case "verboseLog" -> () -> verboseLog;

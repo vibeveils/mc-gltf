@@ -122,6 +122,7 @@ public final class TextureCache {
 		if (key.startsWith("tex:")) {
 			Identifier id = Identifier.parse(key.substring(4));
 			BufferedImage img = readResource(id);
+			if (img == null && id.getPath().startsWith("skins/")) img = readCachedSkin(id);
 			if (img == null) img = readDynamicTexture(id);
 			return img == null ? null : toArgb(img);
 		}
@@ -134,6 +135,82 @@ public final class TextureCache {
 		try (InputStream in = res.get().open()) {
 			return ImageIO.read(in);
 		}
+	}
+
+	private static java.nio.file.Path skinsDir;
+
+	/**
+	 * Player skins (also used by player heads) are downloaded and cached on disk as {@code <skins>/<hash[0:2]>/<hash>};
+	 * their texture id is {@code minecraft:skins/<hash>}. Read the cached PNG.
+	 */
+	private static BufferedImage readCachedSkin(Identifier id) {
+		String hash = id.getPath().substring("skins/".length());
+		if (hash.length() < 2 || hash.contains("/")) return null;
+		for (java.nio.file.Path dir : skinDirectories()) {
+			java.nio.file.Path file = dir.resolve(hash.substring(0, 2)).resolve(hash);
+			if (java.nio.file.Files.isRegularFile(file)) {
+				try (InputStream in = java.nio.file.Files.newInputStream(file)) {
+					BufferedImage img = ImageIO.read(in);
+					if (img != null) return upgradeLegacySkin(img);
+				} catch (IOException e) {
+					GltfExportClient.LOGGER.debug("Could not read skin {}", file, e);
+				}
+			}
+		}
+		GltfExportClient.LOGGER.warn("Skin {} is not in the skin cache yet; look at the player/head in-game first", hash);
+		return null;
+	}
+
+	private static List<java.nio.file.Path> skinDirectories() {
+		List<java.nio.file.Path> dirs = new java.util.ArrayList<>();
+		if (skinsDir == null) {
+			// the skin manager keeps its cache root as a Path field
+			Object skinManager = Refl.invokeNoArg(Minecraft.getInstance(), "getSkinManager");
+			for (java.nio.file.Path p : Refl.searchGraph(skinManager, java.nio.file.Path.class, 4)) {
+				if (p.getFileName() != null && p.getFileName().toString().equals("skins")) {
+					skinsDir = p;
+					break;
+				}
+			}
+		}
+		if (skinsDir != null) dirs.add(skinsDir);
+		java.nio.file.Path game = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir();
+		dirs.add(game.resolve("assets").resolve("skins"));
+		if (game.getParent() != null) dirs.add(game.getParent().resolve("assets").resolve("skins"));
+		String home = System.getProperty("user.home");
+		if (home != null) {
+			dirs.add(java.nio.file.Path.of(home, ".minecraft", "assets", "skins"));
+			dirs.add(java.nio.file.Path.of(home, "AppData", "Roaming", ".minecraft", "assets", "skins"));
+			dirs.add(java.nio.file.Path.of(home, "Library", "Application Support", "minecraft", "assets", "skins"));
+		}
+		String appdata = System.getenv("APPDATA");
+		if (appdata != null) dirs.add(java.nio.file.Path.of(appdata, "ModrinthApp", "meta", "assets", "skins"));
+		return dirs;
+	}
+
+	/** Old 64x32 skins are converted to the 64x64 layout the model UVs expect, as the game does on load. */
+	private static BufferedImage upgradeLegacySkin(BufferedImage img) {
+		img = toArgb(img);
+		if (img.getWidth() != 64 || img.getHeight() != 32) return img;
+		BufferedImage out = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+		java.awt.Graphics2D g = out.createGraphics();
+		g.drawImage(img, 0, 0, null);
+		g.dispose();
+		// legacy skins mirror the right leg/arm onto the left (copyRect calls from vanilla's legacy skin processing)
+		int[][] copies = {
+				{4, 16, 16, 32, 4, 4, 1}, {8, 16, 16, 32, 4, 4, 1}, {0, 20, 24, 32, 4, 12, 1}, {4, 20, 16, 32, 4, 12, 1},
+				{8, 20, 8, 32, 4, 12, 1}, {12, 20, 16, 32, 4, 12, 1}, {44, 16, -8, 32, 4, 4, 1}, {48, 16, -8, 32, 4, 4, 1},
+				{40, 20, 0, 32, 4, 12, 1}, {44, 20, -8, 32, 4, 12, 1}, {48, 20, -16, 32, 4, 12, 1}, {52, 20, -8, 32, 4, 12, 1}};
+		for (int[] c : copies) {
+			for (int y = 0; y < c[5]; y++) {
+				for (int x = 0; x < c[4]; x++) {
+					int sx = c[0] + x, sy = c[1] + y;
+					int dx = c[0] + c[2] + (c[6] == 1 ? c[4] - 1 - x : x), dy = c[1] + c[3] + y;
+					if (dx >= 0 && dx < 64 && dy >= 0 && dy < 64) out.setRGB(dx, dy, out.getRGB(sx, sy));
+				}
+			}
+		}
+		return out;
 	}
 
 	/** Skins, maps and other textures that only exist in memory. Read back through NativeImage via reflection. */
