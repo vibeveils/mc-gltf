@@ -57,7 +57,10 @@ public final class BlockMesher {
 	private boolean fluidsBroken;
 	private boolean tintFallbackLogged;
 
-	public BlockMesher(ClientLevel level, BlockPos min, BlockPos max) {
+	private final boolean closeEdges;
+
+	public BlockMesher(ClientLevel level, BlockPos min, BlockPos max, boolean closeEdges) {
+		this.closeEdges = closeEdges;
 		this.level = level;
 		this.min = min;
 		this.max = max;
@@ -72,9 +75,12 @@ public final class BlockMesher {
 				&& p.getX() <= max.getX() && p.getY() <= max.getY() && p.getZ() <= max.getZ();
 	}
 
-	/** The world as seen from inside the selection: everything outside is air, so the export is closed at its border. */
+	/**
+	 * Neighbour used for face culling. With closeEdges, everything outside the selection counts as air so the model is
+	 * closed at its border; otherwise the real world is used, matching what the game draws.
+	 */
 	private BlockState stateAt(BlockPos p) {
-		return inside(p) ? level.getBlockState(p) : AIR;
+		return inside(p) || !closeEdges ? level.getBlockState(p) : AIR;
 	}
 
 	// ------------------------------------------------------------------ world blocks
@@ -120,6 +126,8 @@ public final class BlockMesher {
 	public void meshParts(BlockState state, BlockPos pos, List<BlockStateModelPart> modelParts, Matrix4f transform,
 						  boolean cull, int[] tintLayers, Map<MaterialKey, Prim> out) {
 		int[] tintCache = null;
+		List<BakedQuad> quads = new ArrayList<>();
+		it.unimi.dsi.fastutil.ints.IntArrayList tints = new it.unimi.dsi.fastutil.ints.IntArrayList();
 		for (BlockStateModelPart part : List.copyOf(modelParts)) {
 			for (int d = 0; d <= DIRECTIONS.length; d++) {
 				Direction dir = d < DIRECTIONS.length ? DIRECTIONS[d] : null;
@@ -143,10 +151,40 @@ public final class BlockMesher {
 							tint = tintCache[tintIndex];
 						}
 					}
-					addBakedQuad(quad, transform, tint, out, -1);
+					quads.add(quad);
+					tints.add(tint);
 				}
 			}
 		}
+
+		// Flat models (flowers, grass, saplings, rails, ...) draw each plane twice, front and back.
+		// Keep one quad per plane and make its material double-sided instead.
+		boolean[] doubleSided = new boolean[quads.size()];
+		boolean[] skip = new boolean[quads.size()];
+		Map<String, Integer> seen = new java.util.HashMap<>();
+		for (int i = 0; i < quads.size(); i++) {
+			String key = planeKey(quads.get(i));
+			Integer first = seen.putIfAbsent(key, i);
+			if (first != null) {
+				skip[i] = true;
+				doubleSided[first] = true;
+			}
+		}
+		for (int i = 0; i < quads.size(); i++) {
+			if (!skip[i]) addBakedQuad(quads.get(i), transform, tints.getInt(i), out, -1, doubleSided[i]);
+		}
+	}
+
+	/** Identifies a quad by its texture and the set of its four corners, ignoring winding (front vs back). */
+	private static String planeKey(BakedQuad quad) {
+		long[] corners = new long[4];
+		for (int i = 0; i < 4; i++) {
+			Vector3fc p = quad.position(i);
+			long x = Math.round(p.x() * 4096), y = Math.round(p.y() * 4096), z = Math.round(p.z() * 4096);
+			corners[i] = (x & 0x1FFFFF) << 42 | (y & 0x1FFFFF) << 21 | (z & 0x1FFFFF);
+		}
+		java.util.Arrays.sort(corners);
+		return System.identityHashCode(quad.materialInfo().sprite()) + java.util.Arrays.toString(corners);
 	}
 
 	/** Computes a block tint exactly as the vanilla block renderer does (grass, foliage, water, redstone, stems...). */
@@ -174,6 +212,11 @@ public final class BlockMesher {
 
 	/** Adds one baked quad. UVs are converted from atlas space to sprite space so each sprite becomes its own texture. */
 	public static void addBakedQuad(BakedQuad quad, Matrix4f transform, int tint, Map<MaterialKey, Prim> out, int joint) {
+		addBakedQuad(quad, transform, tint, out, joint, false);
+	}
+
+	public static void addBakedQuad(BakedQuad quad, Matrix4f transform, int tint, Map<MaterialKey, Prim> out, int joint,
+									boolean doubleSided) {
 		TextureAtlasSprite sprite = quad.materialInfo().sprite();
 		boolean translucent = false;
 		try {
@@ -181,7 +224,7 @@ public final class BlockMesher {
 			translucent = layer == ChunkSectionLayer.TRANSLUCENT;
 		} catch (RuntimeException ignored) {
 		}
-		MaterialKey key = new MaterialKey(TextureCache.spriteKey(sprite), tint, translucent, false, quad.materialInfo().lightEmission() >= 15);
+		MaterialKey key = new MaterialKey(TextureCache.spriteKey(sprite), translucent, doubleSided, quad.materialInfo().lightEmission() >= 15);
 		float[] p = new float[12];
 		float[] t = new float[8];
 		Vector3f v = new Vector3f();
@@ -197,7 +240,7 @@ public final class BlockMesher {
 			t[i * 2] = sprite != null ? TextureCache.localU(sprite, u) : u;
 			t[i * 2 + 1] = sprite != null ? TextureCache.localV(sprite, vv) : vv;
 		}
-		out.computeIfAbsent(key, k -> new Prim()).addQuad(p, t, joint);
+		out.computeIfAbsent(key, k -> new Prim()).addQuad(p, t, joint, tint);
 	}
 
 	// ------------------------------------------------------------------ fluids
@@ -274,9 +317,9 @@ public final class BlockMesher {
 				t[i * 2 + 1] = sprite != null ? TextureCache.localV(sprite, capture.v(vi)) : capture.v(vi);
 			}
 			boolean overlay = sprites.size() > 2 && sprite == sprites.get(2);
-			MaterialKey key = new MaterialKey(TextureCache.spriteKey(sprite), overlay ? 0xFFFFFF : tint,
+			MaterialKey key = new MaterialKey(TextureCache.spriteKey(sprite),
 					translucent && !overlay, true, fluid.is(FluidTags.LAVA));
-			out.computeIfAbsent(key, k -> new Prim()).addQuad(p, t, -1);
+			out.computeIfAbsent(key, k -> new Prim()).addQuad(p, t, -1, overlay ? 0xFFFFFF : tint);
 		}
 	}
 

@@ -9,12 +9,16 @@
 	"icon": "assets/gltfexport/icon.png",
 	"environment": "client",
 	"entrypoints": {
-		"client": ["dev.gltfexport.GltfExportClient"]
+		"client": ["dev.gltfexport.GltfExportClient"],
+		"modmenu": ["dev.gltfexport.ModMenuIntegration"]
 	},
 	"depends": {
 		"fabricloader": ">=0.19.5",
 		"minecraft": "~26.3",
 		"java": ">=25",
 		"fabric-api": "*"
+	},
+	"suggests": {
+		"modmenu": "*"
 	}
 }

@@ -79,10 +79,15 @@ public final class SubmitCapture implements InvocationHandler {
 		}
 
 		String name = method.getName();
+		if (dev.gltfexport.GltfExportClient.SETTINGS.verboseLog) {
+			StringBuilder sb = new StringBuilder();
+			for (Object a : args) sb.append(a == null ? "null" : a.getClass().getSimpleName()).append(' ');
+			GltfExportClient.LOGGER.info("[gltfexport] {}({})", name, sb.toString().trim());
+		}
 		try {
 			if (name.startsWith("submit")) handleSubmit(name, args);
 		} catch (Throwable t) {
-			GltfExportClient.LOGGER.debug("Ignoring {} during capture", name, t);
+			GltfExportClient.LOGGER.warn("Failed to capture {}: {}", name, t.toString());
 		}
 		return fallbackReturn(method, self);
 	}
@@ -211,14 +216,15 @@ public final class SubmitCapture implements InvocationHandler {
 			texKey = TextureCache.spriteKey(sprite);
 		} else {
 			Optional<Identifier> tex = textures.textureOf(renderType);
+			if (tex.isPresent() && skipTexture(tex.get())) return;
 			texKey = TextureCache.textureKey(tex.orElse(null));
 		}
 		textures.source(texKey); // load now, on the client thread
-		String rt = renderType != null ? renderType.toString().toLowerCase(java.util.Locale.ROOT) : "";
+		String rt = renderTypeName(renderType);
 		boolean emissive = rt.contains("eyes") || rt.contains("emissive") || rt.contains("energy");
 		boolean translucent = rt.contains("translucent") || rt.contains("eyes");
-		MaterialKey key = new MaterialKey(texKey, tint, translucent, true, emissive);
-		Rig rig = rigger.rig(part, rigName, rootName, pose, key, sprite);
+		MaterialKey key = new MaterialKey(texKey, translucent, true, emissive);
+		Rig rig = rigger.rig(part, rigName, rootName, pose, key, sprite, tint);
 		if (!rig.isEmpty()) group.rigs.add(rig);
 	}
 
@@ -254,12 +260,11 @@ public final class SubmitCapture implements InvocationHandler {
 		}
 		if (capture.quadCount() == 0) return;
 		Optional<Identifier> tex = textures.textureOf(renderType);
-		if (tex.isEmpty()) return; // untextured debug / beam geometry
+		if (tex.isEmpty() || skipTexture(tex.get())) return; // untextured debug / beam / shadow geometry
 		String key = TextureCache.textureKey(tex.get());
 		textures.source(key);
-		int vertexTint = capture.argb(0) & 0xFFFFFF;
-		int combined = multiply(tint, vertexTint);
-		MaterialKey mat = new MaterialKey(key, combined, true, true, false);
+		MaterialKey mat = new MaterialKey(key, true, true, false);
+		int[] colors = new int[4];
 		float[] p = new float[12];
 		float[] t = new float[8];
 		for (int q = 0; q < capture.quadCount(); q++) {
@@ -270,8 +275,9 @@ public final class SubmitCapture implements InvocationHandler {
 				p[i * 3 + 2] = capture.z(vi);
 				t[i * 2] = capture.u(vi);
 				t[i * 2 + 1] = capture.v(vi);
+				colors[i] = multiply(tint, capture.argb(vi));
 			}
-			group.stat(mat).addQuad(p, t, -1);
+			group.stat(mat).addQuad(p, t, -1, colors);
 		}
 	}
 
@@ -321,10 +327,33 @@ public final class SubmitCapture implements InvocationHandler {
 		return null;
 	}
 
+	/** Only outline passes are skipped by render type; glint, shadows etc. are recognised by their texture. */
 	private static boolean skipRenderType(Object renderType) {
-		String s = renderType.toString().toLowerCase(java.util.Locale.ROOT);
-		return s.contains("glint") || s.contains("outline") || s.contains("shadow") || s.contains("crumbling")
-				|| s.contains("leash") || s.contains("debug") || s.contains("lines");
+		try {
+			return renderType instanceof RenderType rt && rt.isOutline();
+		} catch (RuntimeException | LinkageError e) {
+			return false;
+		}
+	}
+
+	private static boolean skipTexture(Identifier id) {
+		if (id == null) return false;
+		String p = id.getPath();
+		return p.contains("glint") || p.contains("misc/shadow") || p.contains("destroy_stage")
+				|| p.contains("lightmap") || p.contains("misc/white");
+	}
+
+	/** The render type's short name (e.g. "entity_cutout_no_cull", "eyes"), lower case. */
+	private static String renderTypeName(Object renderType) {
+		if (renderType == null) return "";
+		Object n = Refl.get(renderType, "name");
+		String s = n instanceof String str ? str : renderType.toString();
+		int cut = s.length();
+		for (char c : new char[]{'[', '{', '(', ',', ':', ' '}) {
+			int i = s.indexOf(c);
+			if (i > 0 && i < cut) cut = i;
+		}
+		return s.substring(0, cut).toLowerCase(java.util.Locale.ROOT);
 	}
 
 	/**

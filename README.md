@@ -3,6 +3,8 @@
 Select a box in the world and export everything in it to a single **.glb** (binary glTF 2.0) file:
 
 - **Blocks** – exact in-game block models (stairs, fences, multipart, random variants, offsets like flowers/grass).
+  Flat models (flowers, grass, saplings, rails...) get a single quad per plane with a double-sided material instead
+  of the game's separate front and back faces.
 - **Fluids** – water and lava surfaces, using the game's own fluid renderer (modded fluids via Fabric API).
 - **Block entities** – chests, beds, signs, banners (with patterns), skulls, shulker boxes, etc.
 - **Entities** – mobs, players, armour stands, item frames, boats, minecarts, dropped items, including armour
@@ -12,8 +14,8 @@ Select a box in the world and export everything in it to a single **.glb** (bina
 - **Textures** – every texture is embedded as a PNG, pixel-perfect (nearest-neighbour sampling, cut-out/translucent
   alpha set per material, emissive for eyes layers).
 - **Tint and colouration** – biome grass/foliage/water colours, redstone power colour, stem colours, dyed leather,
-  sheep wool, banner pattern colours, tropical fish, etc. are **baked into the textures**, so the model looks the same
-  in every viewer (no vertex-colour setup needed).
+  sheep wool, banner pattern colours, tropical fish, etc. are stored as **vertex colours** (`COLOR_0`), which glTF
+  multiplies with the texture. Each texture is embedded only once, however many colours it is used with.
 
 Scale is 1 block = 1 metre, Y up. The model's origin is the minimum corner of the selection.
 
@@ -26,7 +28,8 @@ outlined with particles. Then run:
 /gltf export my_build
 ```
 
-The file is written to `.minecraft/gltf_exports/my_build.glb`.
+The file is written to `.minecraft/gltf_exports/my_build.glb`. There is **no size limit**: big selections are
+automatically chunked (see below) and the export runs in the background while you keep playing.
 
 | Command | What it does |
 |---|---|
@@ -34,14 +37,47 @@ The file is written to `.minecraft/gltf_exports/my_build.glb`.
 | `/gltf pos1 <x> <y> <z>` | Set a corner to exact coordinates |
 | `/gltf export [name]` | Export (default name is a timestamp) |
 | `/gltf info` | Show corners, size and options |
+| `/gltf cancel` | Stop a running export |
 | `/gltf clear` | Clear the selection |
-| `/gltf set <option> <true\|false>` | Change an option (below) |
+| `/gltf set <option> <value>` | Change an option (below) |
 
-Options: `entities`, `blockEntities`, `fluids`, `includePlayer` (export yourself, off by default), `unlit` (adds
-`KHR_materials_unlit` for a flat in-game look), `showSelection`.
+| `/gltf config` | Open the options screen |
 
-The selection limit is 4,194,304 blocks (e.g. 256 × 64 × 256). Large exports pause the game for a few seconds while
-geometry is captured; the file is written in the background.
+### Options
+
+Defaults are saved to `config/gltfexport.json`. Change them on the options screen (**Mod Menu → glTF Area Exporter →
+Config**, or `/gltf config`), or with `/gltf set <option> <value>`, which also saves.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `entities` | on | Export mobs, players, item frames, boats, dropped items... |
+| `blockEntities` | on | Export chests, beds, signs, banners, skulls... |
+| `fluids` | on | Export water and lava surfaces |
+| `includePlayer` | off | Include yourself if you are inside the selection |
+| `closeEdges` | on | Keep block faces on the selection border so the model is closed. Off culls them against the real blocks outside, like the game does |
+| `rigEntities` | on | Entities as skinned meshes with a skeleton. Off exports plain static meshes |
+| `tints` | on | Grass/foliage/water/dye colours as vertex colours. Off exports untinted geometry |
+| `unlit` | off | `KHR_materials_unlit` materials for a flat in-game look |
+| `partSize` | 512 | Split into several files every N blocks (0 = one file) |
+| `tileSize` | 64 | Size of block mesh nodes inside a file |
+| `showSelection` | on | Outline the selection with particles |
+| `verboseLog` | off | Log every render call seen while capturing entities (for bug reports) |
+
+### Large areas and chunking
+
+- Capture is spread across game ticks (about 30 ms per tick), so the game never freezes; progress shows above the
+  hotbar.
+- **Parts:** a selection wider than `partSize` blocks (default 512) in X or Z is split into several files,
+  `gltf_exports/<name>/<name>_<px>_<pz>.glb`, each covering `partSize × partSize` blocks at full height. All parts
+  share one coordinate system, so importing them together reassembles the whole area seamlessly (faces between parts
+  are culled correctly). Each part is written to disk and freed before the next is captured, so memory use stays
+  bounded no matter how large the selection is. `/gltf set partSize 0` disables splitting (one file, up to the 4 GB
+  .glb format limit).
+- **Tiles:** inside each file, block geometry is split into nodes of `tileSize × tileSize` blocks (default 64)
+  named `blocks_<tx>_<tz>`, which keeps individual meshes manageable in editors and lets viewers cull them.
+- Files are streamed to disk, so there is no in-memory size cap on the output.
+- Only chunks loaded on your client can be exported. Unloaded columns are left empty and the final message says how
+  many; raise your render distance or fly over the area and export again.
 
 ## Building
 
@@ -56,7 +92,9 @@ It is client-side only and works on any server.
 
 ## Opening the file
 
-- **Blender**: File → Import → glTF 2.0. Each entity imports as an armature with its mesh; block geometry is one
+- **Blender**: File → Import → glTF 2.0. Vertex colours import as the `Color` attribute and are wired into the
+  material; if a version of Blender shows grass grey, add a *Color Attribute* node and multiply it with the image
+  texture. Each entity imports as an armature with its mesh; block geometry is one
   mesh named `blocks`. If faces look dark, set the material Blend Mode/Shadow to Alpha Clip for cut-out materials
   (Blender 4.2+ does this automatically from the glTF alpha mode).
 - Also works in three.js, Babylon.js, Godot, Unity (glTFast), Unreal (glTF importer), and online viewers.

@@ -5,7 +5,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Method;
-import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,19 +20,19 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.resources.Resource;
 
 /**
- * Resolves texture keys to images and bakes tints into them.
+ * Resolves texture keys to images. Each texture is exported once; tints are applied as vertex colours.
  *
  * <p>Key formats:
  * <ul>
  *   <li>{@code sprite:<namespace:path>[#anim]} – an atlas sprite; loaded from {@code textures/<path>.png}</li>
  *   <li>{@code tex:<namespace:textures/...png>} – a standalone texture (entity skins, etc.)</li>
  * </ul>
- * Source images are loaded on the client thread during capture; baking/encoding is thread-safe afterwards.
+ * Source images are loaded on the client thread during capture; encoding is thread-safe afterwards.
  */
 public final class TextureCache {
 	public static final String MISSING = "missing";
 
-	private final Map<String, BufferedImage> sources = new HashMap<>();
+	private final Map<String, BufferedImage> sources = new java.util.concurrent.ConcurrentHashMap<>();
 	private final Map<Object, Optional<Identifier>> renderTypeTextures = new IdentityHashMap<>();
 	private int missingCount;
 
@@ -71,7 +70,6 @@ public final class TextureCache {
 			Identifier best = null;
 			for (Identifier id : ids) {
 				String p = id.getPath();
-				if (p.contains("enchanted_glint") || p.contains("lightmap")) continue;
 				if (p.endsWith(".png")) {
 					best = id;
 					break;
@@ -191,25 +189,6 @@ public final class TextureCache {
 			}
 		}
 		return img;
-	}
-
-	/** Source image multiplied by an RGB tint. Thread-safe once sources are loaded. */
-	public static BufferedImage tinted(BufferedImage src, int tintRgb) {
-		tintRgb &= 0xFFFFFF;
-		if (tintRgb == 0xFFFFFF) return src;
-		int tr = tintRgb >> 16 & 255, tg = tintRgb >> 8 & 255, tb = tintRgb & 255;
-		BufferedImage out = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_ARGB);
-		for (int y = 0; y < src.getHeight(); y++) {
-			for (int x = 0; x < src.getWidth(); x++) {
-				int c = src.getRGB(x, y);
-				int a = c >>> 24;
-				int r = (c >> 16 & 255) * tr / 255;
-				int g = (c >> 8 & 255) * tg / 255;
-				int b = (c & 255) * tb / 255;
-				out.setRGB(x, y, a << 24 | r << 16 | g << 8 | b);
-			}
-		}
-		return out;
 	}
 
 	/** 0 = fully opaque, 1 = only on/off alpha, 2 = has partial alpha. */

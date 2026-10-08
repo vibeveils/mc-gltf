@@ -1,7 +1,10 @@
 package dev.gltfexport.export;
 
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
+import java.io.BufferedOutputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -37,7 +40,10 @@ public final class GlbWriter {
 	private final TextureCache textures;
 	private final ExportSettings settings;
 
-	private final ByteArrayOutputStream bin = new ByteArrayOutputStream();
+	/** Binary chunk is streamed to a temp file so output size is not bounded by Java array limits. */
+	private Path binFile;
+	private OutputStream bin;
+	private long binSize;
 	private final JsonArray bufferViews = new JsonArray();
 	private final JsonArray accessors = new JsonArray();
 	private final JsonArray meshes = new JsonArray();
@@ -55,14 +61,41 @@ public final class GlbWriter {
 		this.settings = settings;
 	}
 
-	public byte[] write(String title) throws IOException {
+	/** Writes the scene to {@code out} as a .glb. Returns the file size in bytes. */
+	public long write(String title, Path out) throws IOException {
+		binFile = Files.createTempFile(out.getParent(), ".gltfexport", ".bin");
+		try {
+			bin = new BufferedOutputStream(Files.newOutputStream(binFile), 1 << 20);
+			JsonObject gltf = build(title);
+			bin.close();
+			Gson gson = new GsonBuilder().disableHtmlEscaping().create();
+			return assemble(gson.toJson(gltf).getBytes(StandardCharsets.UTF_8), out);
+		} finally {
+			try {
+				if (bin != null) bin.close();
+			} catch (IOException ignored) {
+			}
+			Files.deleteIfExists(binFile);
+		}
+	}
+
+	private JsonObject build(String title) throws IOException {
 		JsonArray rootChildren = new JsonArray();
 
-		int blocksMesh = addMesh("blocks", scene.blocks, false);
-		if (blocksMesh >= 0) {
+		JsonArray blockNodes = new JsonArray();
+		for (Map.Entry<SceneData.Tile, Map<MaterialKey, Prim>> tile : scene.blockTiles.entrySet()) {
+			String name = "blocks_" + tile.getKey().x() + "_" + tile.getKey().z();
+			int mesh = addMesh(name, tile.getValue(), false);
+			if (mesh < 0) continue;
+			JsonObject n = new JsonObject();
+			n.addProperty("name", name);
+			n.addProperty("mesh", mesh);
+			blockNodes.add(addNode(n));
+		}
+		if (!blockNodes.isEmpty()) {
 			JsonObject n = new JsonObject();
 			n.addProperty("name", "blocks");
-			n.addProperty("mesh", blocksMesh);
+			n.add("children", blockNodes);
 			rootChildren.add(addNode(n));
 		}
 
@@ -129,22 +162,32 @@ public final class GlbWriter {
 		}
 		if (!accessors.isEmpty()) gltf.add("accessors", accessors);
 		if (!bufferViews.isEmpty()) gltf.add("bufferViews", bufferViews);
-		if (bin.size() > 0) {
+		if (binSize > 0) {
+			pad();
 			JsonArray buffers = new JsonArray();
 			JsonObject b = new JsonObject();
-			b.addProperty("byteLength", bin.size());
+			b.addProperty("byteLength", binSize);
 			buffers.add(b);
 			gltf.add("buffers", buffers);
 		}
 
-		Gson gson = new GsonBuilder().disableHtmlEscaping().create();
-		return assemble(gson.toJson(gltf).getBytes(StandardCharsets.UTF_8), bin.toByteArray());
+		return gltf;
 	}
 
 	// ------------------------------------------------------------------------------------------- rigs
 
 	private void addRig(Rig rig, JsonArray groupChildren) throws IOException {
 		if (rig.joints.isEmpty() || rig.isEmpty()) return;
+		if (!settings.rigEntities) {
+			// vertices are already in export space: emit as a plain static mesh
+			int mesh = addMesh(rig.name, rig.prims, false);
+			if (mesh < 0) return;
+			JsonObject n = new JsonObject();
+			n.addProperty("name", rig.name);
+			n.addProperty("mesh", mesh);
+			groupChildren.add(addNode(n));
+			return;
+		}
 		int[] nodeOf = new int[rig.joints.size()];
 		List<List<Integer>> kids = new ArrayList<>();
 		for (int i = 0; i < rig.joints.size(); i++) kids.add(new ArrayList<>());
@@ -241,6 +284,9 @@ public final class GlbWriter {
 			attributes.addProperty("POSITION", accessor(writeFloats(pos, ARRAY_BUFFER), FLOAT, p.vertices, "VEC3", min, max));
 			attributes.addProperty("NORMAL", accessor(writeFloats(p.nrm.toFloatArray(), ARRAY_BUFFER), FLOAT, p.vertices, "VEC3", null, null));
 			attributes.addProperty("TEXCOORD_0", accessor(writeFloats(p.uv.toFloatArray(), ARRAY_BUFFER), FLOAT, p.vertices, "VEC2", null, null));
+			if (settings.tints && p.tinted) {
+				attributes.addProperty("COLOR_0", colorAccessor(p));
+			}
 			if (skinned) {
 				short[] joints = new short[p.vertices * 4];
 				float[] weights = new float[p.vertices * 4];
@@ -272,11 +318,12 @@ public final class GlbWriter {
 		Integer existing = materialIndex.get(key);
 		if (existing != null) return existing;
 
-		int[] tex = texture(key.texture(), key.tint());
+		int[] tex = texture(key.texture());
 		int alphaClass = tex[1];
 
 		JsonObject m = new JsonObject();
-		m.addProperty("name", shortName(key.texture()) + (key.tint() != 0xFFFFFF ? String.format("_%06x", key.tint()) : ""));
+		m.addProperty("name", shortName(key.texture()) + (key.translucent() ? "_translucent" : "")
+				+ (key.emissive() ? "_emissive" : "") + (key.doubleSided() ? "" : "_culled"));
 		JsonObject pbr = new JsonObject();
 		JsonObject base = new JsonObject();
 		base.addProperty("index", tex[0]);
@@ -308,16 +355,17 @@ public final class GlbWriter {
 		return index;
 	}
 
-	private int[] texture(String texKey, int tint) throws IOException {
-		String k = texKey + "|" + Integer.toHexString(tint & 0xFFFFFF);
+	/** One image per source texture; tints live in vertex colours. */
+	private int[] texture(String texKey) throws IOException {
+		String k = texKey;
 		int[] existing = imageIndex.get(k);
 		if (existing != null) return existing;
-		BufferedImage img = TextureCache.tinted(textures.loaded(texKey), tint);
+		BufferedImage img = textures.loaded(texKey);
 		int alphaClass = TextureCache.alphaClass(img);
 		byte[] png = TextureCache.png(img);
 		int view = writeBytes(png, -1);
 		JsonObject image = new JsonObject();
-		image.addProperty("name", shortName(texKey) + ((tint & 0xFFFFFF) != 0xFFFFFF ? String.format("_%06x", tint & 0xFFFFFF) : ""));
+		image.addProperty("name", shortName(texKey));
 		image.addProperty("bufferView", view);
 		image.addProperty("mimeType", "image/png");
 		images.add(image);
@@ -340,6 +388,37 @@ public final class GlbWriter {
 
 	// ------------------------------------------------------------------------------------------- buffers
 
+	/** sRGB -> linear lookup: glTF vertex colours are linear and multiplied with the (linearised) texture. */
+	private static final int[] SRGB_TO_LINEAR_U8 = new int[256];
+
+	static {
+		for (int i = 0; i < 256; i++) {
+			double c = i / 255.0;
+			double lin = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+			SRGB_TO_LINEAR_U8[i] = (int) Math.round(lin * 255.0);
+		}
+	}
+
+	/** COLOR_0 as normalised unsigned bytes, VEC4 (keeps the required 4-byte vertex attribute alignment). */
+	private int colorAccessor(Prim p) throws IOException {
+		byte[] data = new byte[p.vertices * 4];
+		for (int v = 0; v < p.vertices; v++) {
+			int c = p.color.getInt(v);
+			data[v * 4] = (byte) SRGB_TO_LINEAR_U8[c >> 16 & 255];
+			data[v * 4 + 1] = (byte) SRGB_TO_LINEAR_U8[c >> 8 & 255];
+			data[v * 4 + 2] = (byte) SRGB_TO_LINEAR_U8[c & 255];
+			data[v * 4 + 3] = (byte) 255;
+		}
+		JsonObject a = new JsonObject();
+		a.addProperty("bufferView", writeBytes(data, ARRAY_BUFFER));
+		a.addProperty("componentType", 5121); // UNSIGNED_BYTE
+		a.addProperty("normalized", true);
+		a.addProperty("count", p.vertices);
+		a.addProperty("type", "VEC4");
+		accessors.add(a);
+		return accessors.size() - 1;
+	}
+
 	private int addNode(JsonObject node) {
 		nodes.add(node);
 		return nodes.size() - 1;
@@ -357,28 +436,36 @@ public final class GlbWriter {
 		return accessors.size() - 1;
 	}
 
-	private int writeFloats(float[] data, int target) {
+	private int writeFloats(float[] data, int target) throws IOException {
 		ByteBuffer b = ByteBuffer.allocate(data.length * 4).order(ByteOrder.LITTLE_ENDIAN);
 		for (float f : data) b.putFloat(f);
 		return writeBytes(b.array(), target);
 	}
 
-	private int writeShorts(short[] data, int target) {
+	private int writeShorts(short[] data, int target) throws IOException {
 		ByteBuffer b = ByteBuffer.allocate(data.length * 2).order(ByteOrder.LITTLE_ENDIAN);
 		for (short s : data) b.putShort(s);
 		return writeBytes(b.array(), target);
 	}
 
-	private int writeInts(IntArrayList data, int target) {
+	private int writeInts(IntArrayList data, int target) throws IOException {
 		ByteBuffer b = ByteBuffer.allocate(data.size() * 4).order(ByteOrder.LITTLE_ENDIAN);
 		for (int i = 0; i < data.size(); i++) b.putInt(data.getInt(i));
 		return writeBytes(b.array(), target);
 	}
 
-	private int writeBytes(byte[] data, int target) {
-		while (bin.size() % 4 != 0) bin.write(0);
-		int offset = bin.size();
+	private void pad() throws IOException {
+		while (binSize % 4 != 0) {
+			bin.write(0);
+			binSize++;
+		}
+	}
+
+	private int writeBytes(byte[] data, int target) throws IOException {
+		pad();
+		long offset = binSize;
 		bin.write(data, 0, data.length);
+		binSize += data.length;
 		JsonObject v = new JsonObject();
 		v.addProperty("buffer", 0);
 		v.addProperty("byteOffset", offset);
@@ -388,29 +475,40 @@ public final class GlbWriter {
 		return bufferViews.size() - 1;
 	}
 
-	private static byte[] assemble(byte[] json, byte[] binary) {
-		int jsonLen = pad4(json.length);
-		int binLen = pad4(binary.length);
-		int total = 12 + 8 + jsonLen + (binary.length > 0 ? 8 + binLen : 0);
-		ByteBuffer b = ByteBuffer.allocate(total).order(ByteOrder.LITTLE_ENDIAN);
-		b.putInt(0x46546C67); // "glTF"
-		b.putInt(2);
-		b.putInt(total);
-		b.putInt(jsonLen);
-		b.putInt(0x4E4F534A); // "JSON"
-		b.put(json);
-		for (int i = json.length; i < jsonLen; i++) b.put((byte) ' ');
-		if (binary.length > 0) {
-			b.putInt(binLen);
-			b.putInt(0x004E4942); // "BIN\0"
-			b.put(binary);
-			for (int i = binary.length; i < binLen; i++) b.put((byte) 0);
+	private long assemble(byte[] json, Path out) throws IOException {
+		long jsonLen = pad4(json.length);
+		long binLen = pad4(binSize);
+		long total = 12 + 8 + jsonLen + (binSize > 0 ? 8 + binLen : 0);
+		if (total > 0xFFFFFFFFL) {
+			throw new IOException("This part would be " + (total >> 20) + " MB; a .glb can hold at most 4 GB. "
+					+ "Lower the part size with /gltf set partSize <blocks>.");
 		}
-		return b.array();
+		Path tmp = out.resolveSibling(out.getFileName() + ".part");
+		try (OutputStream o = new BufferedOutputStream(Files.newOutputStream(tmp), 1 << 20)) {
+			ByteBuffer h = ByteBuffer.allocate(20).order(ByteOrder.LITTLE_ENDIAN);
+			h.putInt(0x46546C67); // "glTF"
+			h.putInt(2);
+			h.putInt((int) total);
+			h.putInt((int) jsonLen);
+			h.putInt(0x4E4F534A); // "JSON"
+			o.write(h.array());
+			o.write(json);
+			for (long i = json.length; i < jsonLen; i++) o.write(' ');
+			if (binSize > 0) {
+				ByteBuffer b = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
+				b.putInt((int) binLen);
+				b.putInt(0x004E4942); // "BIN\0"
+				o.write(b.array());
+				Files.copy(binFile, o);
+				for (long i = binSize; i < binLen; i++) o.write(0);
+			}
+		}
+		Files.move(tmp, out, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+		return total;
 	}
 
-	private static int pad4(int n) {
-		return (n + 3) & ~3;
+	private static long pad4(long n) {
+		return (n + 3) & ~3L;
 	}
 
 	private static JsonArray arr(float... values) {

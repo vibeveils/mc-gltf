@@ -12,14 +12,14 @@ import org.joml.Vector3f;
 
 /** Plain geometry containers filled while walking the world and consumed by {@link GlbWriter}. */
 public final class SceneData {
-	/** Static block / fluid geometry, one primitive per material. */
-	public final Map<MaterialKey, Prim> blocks = new LinkedHashMap<>();
+	/** Static block / fluid geometry, split into XZ tiles (one glTF node each), one primitive per material. */
+	public final Map<Tile, Map<MaterialKey, Prim>> blockTiles = new LinkedHashMap<>();
 	/** One group per entity / block entity. */
 	public final List<Group> groups = new ArrayList<>();
 
 	public int quadCount() {
 		int n = 0;
-		for (Prim p : blocks.values()) n += p.quads;
+		for (Map<MaterialKey, Prim> tile : blockTiles.values()) for (Prim p : tile.values()) n += p.quads;
 		for (Group g : groups) {
 			for (Prim p : g.statics.values()) n += p.quads;
 			for (Rig r : g.rigs) for (Prim p : r.prims.values()) n += p.quads;
@@ -27,27 +27,38 @@ public final class SceneData {
 		return n;
 	}
 
+	public Map<MaterialKey, Prim> tile(int tx, int tz) {
+		return blockTiles.computeIfAbsent(new Tile(tx, tz), k -> new LinkedHashMap<>());
+	}
+
+	/** Tile coordinates (in units of the tile size) of a block-geometry node. */
+	public record Tile(int x, int z) {
+	}
+
 	/**
 	 * Identifies a glTF material.
 	 *
 	 * @param texture      texture key understood by {@link TextureCache}
-	 * @param tint         RGB multiplier baked into the texture (0xFFFFFF = none)
 	 * @param translucent  renders with alpha blending
 	 * @param doubleSided  disable back-face culling
 	 * @param emissive     glows (eyes layers, emissive render types)
 	 */
-	public record MaterialKey(String texture, int tint, boolean translucent, boolean doubleSided, boolean emissive) {
-		public MaterialKey {
-			tint &= 0xFFFFFF;
-		}
+	public record MaterialKey(String texture, boolean translucent, boolean doubleSided, boolean emissive) {
 	}
 
-	/** A triangle list built from quads. Optionally carries one joint index per vertex for skinning. */
+	/**
+	 * A triangle list built from quads. Carries an RGB vertex colour (biome / dye tint, multiplied with the texture by
+	 * glTF viewers) and optionally one joint index per vertex for skinning.
+	 */
 	public static final class Prim {
 		public final FloatArrayList pos = new FloatArrayList();
 		public final FloatArrayList nrm = new FloatArrayList();
 		public final FloatArrayList uv = new FloatArrayList();
 		public final IntArrayList joint = new IntArrayList();
+		/** sRGB 0xRRGGBB per vertex. */
+		public final IntArrayList color = new IntArrayList();
+		/** True once any vertex is not white, so COLOR_0 is only written when it matters. */
+		public boolean tinted;
 		public final IntArrayList idx = new IntArrayList();
 		public int vertices;
 		public int quads;
@@ -56,8 +67,14 @@ public final class SceneData {
 		 * @param p  12 floats: 4 vertex positions, counter-clockwise
 		 * @param t  8 floats: 4 UVs
 		 * @param j  joint index for all 4 vertices, or -1 for static geometry
+		 * @param rgb tint for all 4 vertices (0xFFFFFF = none)
 		 */
-		public void addQuad(float[] p, float[] t, int j) {
+		public void addQuad(float[] p, float[] t, int j, int rgb) {
+			addQuad(p, t, j, new int[]{rgb, rgb, rgb, rgb});
+		}
+
+		/** As above with a tint per vertex. */
+		public void addQuad(float[] p, float[] t, int j, int[] rgb) {
 			Vector3f a = new Vector3f(p[3] - p[0], p[4] - p[1], p[5] - p[2]);
 			Vector3f b = new Vector3f(p[6] - p[0], p[7] - p[1], p[8] - p[2]);
 			Vector3f n = a.cross(b);
@@ -82,6 +99,9 @@ public final class SceneData {
 				uv.add(t[i * 2]);
 				uv.add(t[i * 2 + 1]);
 				if (j >= 0) joint.add(j);
+				int c = rgb[i] & 0xFFFFFF;
+				color.add(c);
+				if (c != 0xFFFFFF) tinted = true;
 			}
 			idx.add(base);
 			idx.add(base + 1);

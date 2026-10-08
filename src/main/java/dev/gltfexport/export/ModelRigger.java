@@ -31,6 +31,7 @@ public final class ModelRigger {
 	private static boolean warned;
 
 	private final CaptureConsumer capture = new CaptureConsumer();
+	private int tint = 0xFFFFFF;
 
 	/**
 	 * @param root      the part to start from (a model's root or a single submitted part)
@@ -40,7 +41,8 @@ public final class ModelRigger {
 	 * @param sprite    if the model was submitted with an atlas sprite, its UVs are already sprite-relative
 	 */
 	public Rig rig(ModelPart root, String rigName, String rootName, Matrix4f basePose, MaterialKey material,
-				   TextureAtlasSprite sprite) {
+				   TextureAtlasSprite sprite, int tint) {
+		this.tint = tint;
 		Rig rig = new Rig(rigName);
 		PoseStack ps = new PoseStack();
 		ps.last().pose().set(basePose);
@@ -93,7 +95,7 @@ public final class ModelRigger {
 				t[i * 2] = capture.u(vi);
 				t[i * 2 + 1] = capture.v(vi);
 			}
-			prim.addQuad(p, t, jointIndex);
+			prim.addQuad(p, t, jointIndex, tint);
 		}
 	}
 

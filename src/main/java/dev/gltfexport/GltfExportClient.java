@@ -42,15 +42,16 @@ public final class GltfExportClient implements ClientModInitializer {
 	public static final String MOD_ID = "gltfexport";
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 	public static final Item WAND = Items.GOLDEN_HOE;
-	private static final long MAX_BLOCKS = 4_194_304L; // e.g. 256 x 64 x 256
 
 	public static final ExportSettings SETTINGS = new ExportSettings();
 	private static BlockPos pos1, pos2;
-	private static boolean exporting;
+	private static ExportJob job;
 	private static int tick;
+	private static boolean openOptions;
 
 	@Override
 	public void onInitializeClient() {
+		SETTINGS.load();
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, context) -> dispatcher.register(buildCommand()));
 
 		AttackBlockCallback.EVENT.register((player, level, hand, pos, direction) -> {
@@ -73,6 +74,14 @@ public final class GltfExportClient implements ClientModInitializer {
 		});
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
+			if (job != null) {
+				job.tick();
+				if (job.isDone()) job = null;
+			}
+			if (openOptions) {
+				openOptions = false;
+				client.setScreen(new OptionsScreen(null));
+			}
 			if (++tick % 8 == 0) drawSelection(client);
 		});
 	}
@@ -93,6 +102,20 @@ public final class GltfExportClient implements ClientModInitializer {
 				.executes(ctx -> export(ctx, defaultName()))
 				.then(ClientCommands.argument("name", StringArgumentType.word())
 						.executes(ctx -> export(ctx, StringArgumentType.getString(ctx, "name")))));
+
+		root.then(ClientCommands.literal("config").executes(ctx -> {
+			openOptions = true; // next tick, after the chat screen has closed
+			return Command.SINGLE_SUCCESS;
+		}));
+
+		root.then(ClientCommands.literal("cancel").executes(ctx -> {
+			if (job == null) {
+				ctx.getSource().sendError(Component.literal("No export is running."));
+				return 0;
+			}
+			job.cancel();
+			return Command.SINGLE_SUCCESS;
+		}));
 
 		root.then(ClientCommands.literal("clear").executes(ctx -> {
 			pos1 = pos2 = null;
@@ -120,7 +143,18 @@ public final class GltfExportClient implements ClientModInitializer {
 					.then(ClientCommands.argument("value", BoolArgumentType.bool()).executes(ctx -> {
 						boolean v = BoolArgumentType.getBool(ctx, "value");
 						SETTINGS.set(option, v);
-						ctx.getSource().sendFeedback(Component.literal(option + " = " + v));
+						SETTINGS.save();
+						ctx.getSource().sendFeedback(Component.literal(option + " = " + v + " (saved as default)"));
+						return Command.SINGLE_SUCCESS;
+					})));
+		}
+		for (String option : ExportSettings.INT_NAMES) {
+			set.then(ClientCommands.literal(option)
+					.then(ClientCommands.argument("value", IntegerArgumentType.integer(0)).executes(ctx -> {
+						int v = IntegerArgumentType.getInteger(ctx, "value");
+						SETTINGS.setInt(option, v);
+						SETTINGS.save();
+						ctx.getSource().sendFeedback(Component.literal(option + " = " + v + " (saved as default)"));
 						return Command.SINGLE_SUCCESS;
 					})));
 		}
@@ -157,42 +191,31 @@ public final class GltfExportClient implements ClientModInitializer {
 			src.sendError(Component.literal("Select two corners first (golden hoe, or /gltf pos1 and /gltf pos2)."));
 			return 0;
 		}
-		if (exporting) {
-			src.sendError(Component.literal("An export is already running."));
-			return 0;
-		}
-		if (volume() > MAX_BLOCKS) {
-			src.sendError(Component.literal("Selection is " + volume() + " blocks; the limit is " + MAX_BLOCKS + "."));
+		if (job != null) {
+			src.sendError(Component.literal("An export is already running (/gltf cancel to stop it)."));
 			return 0;
 		}
 		ClientLevel level = src.getLevel();
 		String safe = name.replaceAll("[^A-Za-z0-9_.-]", "_");
-		Path file = FabricLoader.getInstance().getGameDir().resolve("gltf_exports").resolve(safe + ".glb");
-
-		src.sendFeedback(Component.literal("Exporting " + volume() + " blocks..."));
-		exporting = true;
+		Path root = FabricLoader.getInstance().getGameDir().resolve("gltf_exports");
 		Minecraft mc = src.getClient();
-		try {
-			ExportJob.start(level, pos1, pos2, file, SETTINGS, msg -> src.sendFeedback(Component.literal(msg)))
-					.whenComplete((result, error) -> mc.execute(() -> {
-						exporting = false;
-						if (error != null) {
-							src.sendError(Component.literal("Export failed: " + rootMessage(error)));
-							return;
-						}
-						src.sendFeedback(Component.literal("Saved " + result.file().getFileName() + " ("
-								+ (result.bytes() / 1024) + " KB) to " + result.file().getParent()).withStyle(ChatFormatting.GREEN));
-						if (result.missingTextures() > 0) {
-							src.sendFeedback(Component.literal(result.missingTextures()
-									+ " texture(s) could not be read and use a placeholder; see the log.").withStyle(ChatFormatting.YELLOW));
-						}
-					}));
-		} catch (RuntimeException e) {
-			exporting = false;
-			LOGGER.error("Export failed", e);
-			src.sendError(Component.literal("Export failed: " + e));
-			return 0;
-		}
+
+		job = new ExportJob(level, pos1, pos2, safe, root, SETTINGS, new ExportJob.Listener() {
+			@Override
+			public void progress(String message) {
+				if (mc.player != null) mc.player.sendOverlayMessage(Component.literal(message));
+			}
+
+			@Override
+			public void finished(String message, boolean success) {
+				mc.execute(() -> {
+					if (success) src.sendFeedback(Component.literal(message).withStyle(ChatFormatting.GREEN));
+					else src.sendError(Component.literal(message));
+				});
+			}
+		});
+		src.sendFeedback(Component.literal("Exporting " + volume() + " blocks as " + job.describe()
+				+ ". You can keep playing; /gltf cancel stops it."));
 		return Command.SINGLE_SUCCESS;
 	}
 
