@@ -128,6 +128,140 @@ public final class SceneData {
 			vertices += 4;
 			quads++;
 		}
+
+		/**
+		 * Merges vertices that touch: same position, normal, UV and bone. Faces of neighbouring blocks then share
+		 * their edge vertices and form one connected surface instead of a separate island per face. Vertex colours of
+		 * merged vertices are averaged (so a biome border blends smoothly, like the game's biome blending).
+		 */
+		public void weld() {
+			weld(false);
+		}
+
+		/**
+		 * @param acrossEdges also merge vertices whose normals differ (faces meeting at an angle). Their normals are
+		 *                    averaged; meant for flat shading in the target application. Vertices still need the
+		 *                    same UV to merge, because glTF stores one UV per vertex.
+		 */
+		public void weld(boolean acrossEdges) {
+			if (welded || vertices == 0) return;
+			welded = true;
+			java.util.HashMap<VKey, Integer> map = new java.util.HashMap<>(vertices);
+			FloatArrayList nPos = new FloatArrayList(), nNrm = new FloatArrayList(), nUv = new FloatArrayList();
+			IntArrayList nJoint = new IntArrayList();
+			java.util.ArrayList<long[]> colorSums = new java.util.ArrayList<>();
+			int[] remap = new int[vertices];
+			boolean skinned = joint.size() == vertices;
+			for (int v = 0; v < vertices; v++) {
+				float x = pos.getFloat(v * 3), y = pos.getFloat(v * 3 + 1), z = pos.getFloat(v * 3 + 2);
+				float nx = nrm.getFloat(v * 3), ny = nrm.getFloat(v * 3 + 1), nz = nrm.getFloat(v * 3 + 2);
+				float u = uv.getFloat(v * 2), w = uv.getFloat(v * 2 + 1);
+				int j = skinned ? joint.getInt(v) : -1;
+				int nKey = acrossEdges ? 0
+						: (int) (q(nx, 256) & 1023) << 20 | (int) (q(ny, 256) & 1023) << 10 | (int) (q(nz, 256) & 1023);
+				VKey key = new VKey(q(x, 1 << 14), q(y, 1 << 14), q(z, 1 << 14), q(u, 1 << 16), q(w, 1 << 16), nKey, j);
+				Integer existing = map.get(key);
+				int c = color.getInt(v);
+				if (existing == null) {
+					int ni = nPos.size() / 3;
+					map.put(key, ni);
+					nPos.add(x);
+					nPos.add(y);
+					nPos.add(z);
+					nNrm.add(nx);
+					nNrm.add(ny);
+					nNrm.add(nz);
+					nUv.add(u);
+					nUv.add(w);
+					if (skinned) nJoint.add(j);
+					colorSums.add(new long[]{c >> 16 & 255, c >> 8 & 255, c & 255, 1});
+					remap[v] = ni;
+				} else {
+					long[] sum = colorSums.get(existing);
+					sum[0] += c >> 16 & 255;
+					sum[1] += c >> 8 & 255;
+					sum[2] += c & 255;
+					sum[3]++;
+					remap[v] = existing;
+					if (acrossEdges) {
+						nNrm.set(existing * 3, nNrm.getFloat(existing * 3) + nx);
+						nNrm.set(existing * 3 + 1, nNrm.getFloat(existing * 3 + 1) + ny);
+						nNrm.set(existing * 3 + 2, nNrm.getFloat(existing * 3 + 2) + nz);
+					}
+				}
+			}
+			for (int i = 0; i < idx.size(); i++) idx.set(i, remap[idx.getInt(i)]);
+			pos.clear();
+			nrm.clear();
+			uv.clear();
+			joint.clear();
+			color.clear();
+			copy(nPos, pos);
+			if (acrossEdges) {
+				for (int i = 0; i < nNrm.size(); i += 3) {
+					float nx = nNrm.getFloat(i), ny = nNrm.getFloat(i + 1), nz = nNrm.getFloat(i + 2);
+					float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+					if (len < 1e-6f) {
+						nx = 0;
+						ny = 1;
+						nz = 0;
+						len = 1;
+					}
+					nNrm.set(i, nx / len);
+					nNrm.set(i + 1, ny / len);
+					nNrm.set(i + 2, nz / len);
+				}
+			}
+			copy(nNrm, nrm);
+			copy(nUv, uv);
+			for (int i = 0; i < nJoint.size(); i++) joint.add(nJoint.getInt(i));
+			for (long[] sum : colorSums) {
+				int r = (int) Math.round((double) sum[0] / sum[3]);
+				int g = (int) Math.round((double) sum[1] / sum[3]);
+				int b = (int) Math.round((double) sum[2] / sum[3]);
+				color.add(r << 16 | g << 8 | b);
+			}
+			vertices = colorSums.size();
+		}
+
+		private boolean welded;
+
+		private static long q(float f, int scale) {
+			return Math.round((double) f * scale);
+		}
+
+		private static void copy(FloatArrayList from, FloatArrayList to) {
+			for (int i = 0; i < from.size(); i++) to.add(from.getFloat(i));
+		}
+
+		private record VKey(long x, long y, long z, long u, long v, int n, int j) {
+		}
+	}
+
+	/**
+	 * Shifts a quad's UVs by whole texture repeats (invisible with REPEAT wrapping) so the texture phase is anchored to
+	 * the world rather than to the quad. Coplanar neighbouring faces with the same texture then have identical UVs at
+	 * their shared corners, which lets {@link Prim#weld} join them.
+	 */
+	public static void alignUv(float[] p, float[] t) {
+		Vector3f e1 = new Vector3f(p[3] - p[0], p[4] - p[1], p[5] - p[2]);
+		Vector3f e2 = new Vector3f(p[9] - p[0], p[10] - p[1], p[11] - p[2]);
+		float a = e1.dot(e1), b = e1.dot(e2), c = e2.dot(e2);
+		float det = a * c - b * b;
+		if (Math.abs(det) < 1e-12f) return;
+		for (int k = 0; k < 2; k++) {
+			float d1 = t[2 + k] - t[k];
+			float d2 = t[6 + k] - t[k];
+			// gradient g = alpha*e1 + beta*e2 with g.e1 = d1, g.e2 = d2
+			float alpha = (d1 * c - d2 * b) / det;
+			float beta = (d2 * a - d1 * b) / det;
+			Vector3f g = new Vector3f(e1).mul(alpha).add(new Vector3f(e2).mul(beta));
+			// texture coordinate this face's mapping gives at the world origin
+			double atOrigin = t[k] - (g.x * (double) p[0] + g.y * (double) p[1] + g.z * (double) p[2]);
+			double shift = -Math.floor(atOrigin + 1e-4);
+			if (shift == 0) continue;
+			for (int i = 0; i < 4; i++) t[i * 2 + k] += (float) shift;
+		}
 	}
 
 	/** A bone. {@code global} maps bone space to export space (the current pose doubles as the bind pose). */

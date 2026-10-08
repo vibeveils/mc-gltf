@@ -240,6 +240,7 @@ public final class BlockMesher {
 			t[i * 2] = sprite != null ? TextureCache.localU(sprite, u) : u;
 			t[i * 2 + 1] = sprite != null ? TextureCache.localV(sprite, vv) : vv;
 		}
+		SceneData.alignUv(p, t);
 		out.computeIfAbsent(key, k -> new Prim()).addQuad(p, t, joint, tint);
 	}
 
@@ -319,6 +320,7 @@ public final class BlockMesher {
 			boolean overlay = sprites.size() > 2 && sprite == sprites.get(2);
 			MaterialKey key = new MaterialKey(TextureCache.spriteKey(sprite),
 					translucent && !overlay, true, fluid.is(FluidTags.LAVA));
+			SceneData.alignUv(p, t);
 			out.computeIfAbsent(key, k -> new Prim()).addQuad(p, t, -1, overlay ? 0xFFFFFF : tint);
 		}
 	}

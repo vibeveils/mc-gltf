@@ -277,6 +277,7 @@ public final class GlbWriter {
 		for (Map.Entry<MaterialKey, Prim> e : prims.entrySet()) {
 			Prim p = e.getValue();
 			if (p.quads == 0) continue;
+			p.weld(settings.weldEdges);
 			JsonObject attributes = new JsonObject();
 			float[] pos = p.pos.toFloatArray();
 			float[] min = {Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY};

@@ -3,6 +3,10 @@
 Select a box in the world and export everything in it to a single **.glb** (binary glTF 2.0) file:
 
 - **Blocks** – exact in-game block models (stairs, fences, multipart, random variants, offsets like flowers/grass).
+  Touching faces are welded: neighbouring blocks share their edge vertices, so a wall or floor is one connected
+  surface rather than a separate island per block face. UVs are anchored to the world (shifted by whole texture
+  repeats, which is invisible) so adjacent faces line up exactly; where biome tints differ, the shared vertex blends
+  them. Faces meeting at an angle keep separate vertices so edges stay sharp.
   Flat models (flowers, grass, saplings, rails...) get a single quad per plane with a double-sided material instead
   of the game's separate front and back faces.
 - **Fluids** – water and lava surfaces, using the game's own fluid renderer (modded fluids via Fabric API).
@@ -63,6 +67,7 @@ Config**, or `/gltf config`), or with `/gltf set <option> <value>`, which also s
 | `closeEdges` | on | Keep block faces on the selection border so the model is closed. Off culls them against the real blocks outside, like the game does |
 | `rigEntities` | on | Entities as skinned meshes with a skeleton. Off exports plain static meshes |
 | `tints` | on | Grass/foliage/water/dye colours as vertex colours. Off exports untinted geometry |
+| `weldEdges` | off | Also join vertices where faces meet at an angle (block corners), averaging normals. For flat shading. See note below |
 | `unlit` | off | `KHR_materials_unlit` materials for a flat in-game look |
 | `partSize` | 512 | Split into several files every N blocks (0 = one file) |
 | `tileSize` | 64 | Size of block mesh nodes inside a file |
@@ -98,6 +103,10 @@ It is client-side only and works on any server.
 
 ## Opening the file
 
+- **Blender, fully connected mesh**: glTF can store only one UV per vertex, so a corner where faces use different parts
+  of a texture always needs separate vertices in the file (`weldEdges` merges only the corners where UVs happen to
+  match). For a mesh with every touching corner shared, tick **Merge Vertices** in Blender's glTF import options:
+  Blender keeps UVs per face corner, so it can join them all, and with flat shading nothing changes visually.
 - **Blender**: File → Import → glTF 2.0. Vertex colours import as the `Color` attribute and are wired into the
   material; if a version of Blender shows grass grey, add a *Color Attribute* node and multiply it with the image
   texture. Each entity imports as an armature with its mesh; block geometry is one
