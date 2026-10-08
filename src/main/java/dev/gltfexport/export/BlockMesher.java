@@ -24,7 +24,6 @@ import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
-import net.minecraft.client.resources.model.sprite.Material;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.tags.FluidTags;
@@ -225,9 +224,12 @@ public final class BlockMesher {
 		if (capture.quadCount() == 0) return;
 
 		List<TextureAtlasSprite> sprites = new ArrayList<>(3);
-		addSprite(sprites, fluidModel.stillMaterial());
-		addSprite(sprites, fluidModel.flowingMaterial());
-		addSprite(sprites, fluidModel.overlayMaterial());
+		var still = fluidModel.stillMaterial();
+		var flowing = fluidModel.flowingMaterial();
+		var overlayMat = fluidModel.overlayMaterial();
+		addSprite(sprites, still != null ? still.sprite() : null);
+		addSprite(sprites, flowing != null ? flowing.sprite() : null);
+		addSprite(sprites, overlayMat != null ? overlayMat.sprite() : null);
 
 		int tint = fluidTint(fluidModel, state, fluid, pos);
 		boolean translucent = !fluid.is(FluidTags.LAVA);
@@ -278,10 +280,8 @@ public final class BlockMesher {
 		}
 	}
 
-	private static void addSprite(List<TextureAtlasSprite> list, Material material) {
-		if (material == null) return;
-		TextureAtlasSprite s = material.sprite();
-		if (s != null) list.add(s);
+	private static void addSprite(List<TextureAtlasSprite> list, TextureAtlasSprite sprite) {
+		if (sprite != null) list.add(sprite);
 	}
 
 	private int fluidTint(FluidModel model, BlockState state, FluidState fluid, BlockPos pos) {
