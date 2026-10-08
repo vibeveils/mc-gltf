@@ -80,7 +80,7 @@ public final class GltfExportClient implements ClientModInitializer {
 			}
 			if (openOptions) {
 				openOptions = false;
-				client.setScreen(new OptionsScreen(null));
+				client.gui.setScreen(new OptionsScreen(null));
 			}
 			if (++tick % 8 == 0) drawSelection(client);
 		});

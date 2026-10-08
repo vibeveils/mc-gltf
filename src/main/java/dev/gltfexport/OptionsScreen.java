@@ -96,6 +96,6 @@ public final class OptionsScreen extends Screen {
 	@Override
 	public void onClose() {
 		settings.save();
-		this.minecraft.setScreen(parent);
+		this.minecraft.gui.setScreen(parent);
 	}
 }
