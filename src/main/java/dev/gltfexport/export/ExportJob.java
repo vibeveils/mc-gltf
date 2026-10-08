@@ -213,7 +213,7 @@ public final class ExportJob {
 		if (be == null) return;
 		Group group = new Group(idPath(BuiltInRegistries.BLOCK_ENTITY_TYPE.getKey(be.getType()))
 				+ "_" + pos.getX() + "_" + pos.getY() + "_" + pos.getZ());
-		SubmitCapture capture = new SubmitCapture(group, textures, mesher);
+		SubmitCapture capture = new SubmitCapture(group, textures, mesher, SkinResolver.find(be));
 		bridge.submitBlockEntity(be, pos.getX() - min.getX(), pos.getY() - min.getY(), pos.getZ() - min.getZ(), capture);
 		// origin at the bottom centre of the block; block entities face via their own model
 		group.localize(new org.joml.Matrix4f().translation(pos.getX() - min.getX() + 0.5f, pos.getY() - min.getY(),
@@ -234,7 +234,7 @@ public final class ExportJob {
 			int bx = (int) Math.floor(e.getX()), bz = (int) Math.floor(e.getZ());
 			if (bx < p[0] || bx > p[2] || bz < p[1] || bz > p[3]) continue;
 			Group group = new Group(idPath(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType())) + "_" + e.getId());
-			SubmitCapture capture = new SubmitCapture(group, textures, mesher);
+			SubmitCapture capture = new SubmitCapture(group, textures, mesher, SkinResolver.find(e));
 			bridge.submitEntity(e, e.getX() - min.getX(), e.getY() - min.getY(), e.getZ() - min.getZ(), capture);
 			// place the group at the entity's feet, turned to face where it faces; inside, the entity faces +Z
 			float yaw = e instanceof net.minecraft.world.entity.LivingEntity living ? living.yBodyRot : e.getYRot();

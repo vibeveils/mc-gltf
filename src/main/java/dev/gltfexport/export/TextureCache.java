@@ -119,6 +119,20 @@ public final class TextureCache {
 			}
 			return toArgb(img);
 		}
+		if (key.startsWith("skin:")) {
+			String rest = key.substring(5);
+			int bar = rest.indexOf('|');
+			String hash = bar >= 0 ? rest.substring(0, bar) : rest;
+			String url = bar >= 0 ? rest.substring(bar + 1) : "";
+			BufferedImage img = readSkinHash(hash);
+			if (img == null) {
+				byte[] png = SkinResolver.download(url);
+				if (png != null) img = ImageIO.read(new java.io.ByteArrayInputStream(png));
+				if (img != null) img = upgradeLegacySkin(img);
+			}
+			if (img == null) img = readDynamicTexture(Identifier.fromNamespaceAndPath("minecraft", "skins/" + hash));
+			return img == null ? null : toArgb(img);
+		}
 		if (key.startsWith("tex:")) {
 			Identifier id = Identifier.parse(key.substring(4));
 			BufferedImage img = readResource(id);
@@ -144,7 +158,10 @@ public final class TextureCache {
 	 * their texture id is {@code minecraft:skins/<hash>}. Read the cached PNG.
 	 */
 	private static BufferedImage readCachedSkin(Identifier id) {
-		String hash = id.getPath().substring("skins/".length());
+		return readSkinHash(id.getPath().substring("skins/".length()));
+	}
+
+	private static BufferedImage readSkinHash(String hash) {
 		if (hash.length() < 2 || hash.contains("/")) return null;
 		for (java.nio.file.Path dir : skinDirectories()) {
 			java.nio.file.Path file = dir.resolve(hash.substring(0, 2)).resolve(hash);
@@ -157,7 +174,7 @@ public final class TextureCache {
 				}
 			}
 		}
-		GltfExportClient.LOGGER.warn("Skin {} is not in the skin cache yet; look at the player/head in-game first", hash);
+		GltfExportClient.LOGGER.info("Skin {} is not in the skin cache; downloading it", hash);
 		return null;
 	}
 

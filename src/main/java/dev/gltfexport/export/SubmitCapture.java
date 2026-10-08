@@ -45,7 +45,15 @@ public final class SubmitCapture implements InvocationHandler {
 	private final Set<String> ignored = new HashSet<>();
 	private final Object proxy;
 
+	/** Skin texture key for player heads / players, used instead of a default or unreadable skin texture. */
+	private final String skinOverride;
+
 	public SubmitCapture(Group group, TextureCache textures, BlockMesher blocks) {
+		this(group, textures, blocks, null);
+	}
+
+	public SubmitCapture(Group group, TextureCache textures, BlockMesher blocks, String skinOverride) {
+		this.skinOverride = skinOverride;
 		this.group = group;
 		this.textures = textures;
 		this.blocks = blocks;
@@ -215,6 +223,10 @@ public final class SubmitCapture implements InvocationHandler {
 			Optional<Identifier> tex = textures.textureOf(renderType);
 			if (tex.isPresent() && skipTexture(tex.get())) return;
 			texKey = TextureCache.textureKey(tex.orElse(null));
+			if (skinOverride != null && isSkinTexture(tex.orElse(null))) texKey = skinOverride;
+			if (GltfExportClient.SETTINGS.verboseLog) {
+				GltfExportClient.LOGGER.info("[gltfexport] {} texture {} -> {}", rigName, tex.orElse(null), texKey);
+			}
 		}
 		textures.source(texKey); // load now, on the client thread
 		String rt = renderTypeName(renderType);
@@ -322,6 +334,14 @@ public final class SubmitCapture implements InvocationHandler {
 			if (isRenderType(a)) return a;
 		}
 		return null;
+	}
+
+	/** A player skin slot: a downloaded skin, a default skin, or a texture we couldn't identify. */
+	private static boolean isSkinTexture(Identifier id) {
+		if (id == null) return true;
+		String p = id.getPath();
+		return p.startsWith("skins/") || p.contains("entity/player/") || p.contains("textures/entity/steve")
+				|| p.contains("textures/entity/alex");
 	}
 
 	/** Only outline passes are skipped by render type; glint, shadows etc. are recognised by their texture. */
