@@ -1,0 +1,20 @@
+{
+	"schemaVersion": 1,
+	"id": "gltfexport",
+	"version": "${version}",
+	"name": "glTF Area Exporter",
+	"description": "Select an area and export every block, fluid, block entity and entity in it (with skeleton rigs, textures and biome/dye tints) to a single .glb file.",
+	"authors": ["codedcells"],
+	"license": "MIT",
+	"icon": "assets/gltfexport/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"client": ["dev.gltfexport.GltfExportClient"]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
