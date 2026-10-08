@@ -10,7 +10,13 @@ Select a box in the world and export everything in it to a single **.glb** (bina
 - **Entities** – mobs, players, armour stands, item frames, boats, minecarts, dropped items, including armour
   layers, held items, capes and other render layers.
 - **Rigs** – every entity model is exported as a **skinned mesh with a skeleton**: one bone per model part, named after
-  the part (`head`, `body`, `left_arm`, `right_hind_leg`...), posed as it was in-game. Re-pose or animate it in Blender.
+  the part (`head`, `body`, `left_arm`, `right_hind_leg`...), posed as it was in-game.
+  - Each entity is a node placed in the scene at its feet and turned to face where it faced; inside that node the
+    entity faces +Z.
+  - The armature sits at that node's origin with no translation or rotation.
+  - Bones have no rest rotation, only their pivot positions; the in-game pose is kept in the mesh. Rotating a bone
+    swings that part around its real pivot, ready to re-pose or animate.
+  - Block entities (chests, beds...) are placed the same way, with the origin at the bottom centre of their block.
 - **Textures** – every texture is embedded as a PNG, pixel-perfect (nearest-neighbour sampling, cut-out/translucent
   alpha set per material, emissive for eyes layers).
 - **Tint and colouration** – biome grass/foliage/water colours, redstone power colour, stem colours, dyed leather,

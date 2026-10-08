@@ -7,6 +7,7 @@ import java.util.Map;
 
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
@@ -69,6 +70,21 @@ public final class SceneData {
 		 * @param j  joint index for all 4 vertices, or -1 for static geometry
 		 * @param rgb tint for all 4 vertices (0xFFFFFF = none)
 		 */
+		/** Applies a transform to all positions and normals (used to move geometry into a group's local space). */
+		public void transform(Matrix4f m, Matrix3f normalMatrix) {
+			Vector3f v = new Vector3f();
+			for (int i = 0; i < vertices; i++) {
+				m.transformPosition(v.set(pos.getFloat(i * 3), pos.getFloat(i * 3 + 1), pos.getFloat(i * 3 + 2)));
+				pos.set(i * 3, v.x);
+				pos.set(i * 3 + 1, v.y);
+				pos.set(i * 3 + 2, v.z);
+				normalMatrix.transform(v.set(nrm.getFloat(i * 3), nrm.getFloat(i * 3 + 1), nrm.getFloat(i * 3 + 2))).normalize();
+				nrm.set(i * 3, v.x);
+				nrm.set(i * 3 + 1, v.y);
+				nrm.set(i * 3 + 2, v.z);
+			}
+		}
+
 		public void addQuad(float[] p, float[] t, int j, int rgb) {
 			addQuad(p, t, j, new int[]{rgb, rgb, rgb, rgb});
 		}
@@ -143,8 +159,34 @@ public final class SceneData {
 		public final List<Rig> rigs = new ArrayList<>();
 		public final Map<MaterialKey, Prim> statics = new LinkedHashMap<>();
 
+		/**
+		 * Where the group sits in the export: entity position and facing. Everything inside the group is stored
+		 * relative to this after {@link #localize}, so armatures start at the origin with no rotation.
+		 */
+		public final Matrix4f placement = new Matrix4f();
+
 		public Group(String name) {
 			this.name = name;
+		}
+
+		/**
+		 * Moves all geometry and bones from export space into the group's local space and makes every bone's rest
+		 * orientation axis-aligned (bones keep only their pivot position). The current pose stays baked into the
+		 * vertices, so the model looks identical but the armature is clean: origin at 0, no rotations.
+		 */
+		public void localize(Matrix4f newPlacement) {
+			placement.set(newPlacement);
+			Matrix4f inv = new Matrix4f(newPlacement).invert();
+			Matrix3f normalInv = new Matrix3f(inv).invert().transpose();
+			for (Prim p : statics.values()) p.transform(inv, normalInv);
+			for (Rig r : rigs) {
+				for (Prim p : r.prims.values()) p.transform(inv, normalInv);
+				for (int i = 0; i < r.joints.size(); i++) {
+					Joint j = r.joints.get(i);
+					Vector3f pivot = new Matrix4f(inv).mul(j.global()).getTranslation(new Vector3f());
+					r.joints.set(i, new Joint(j.name(), j.parent(), new Matrix4f().translation(pivot)));
+				}
+			}
 		}
 
 		public Prim stat(MaterialKey key) {

@@ -112,6 +112,7 @@ public final class GlbWriter {
 			if (children.isEmpty()) continue;
 			JsonObject g = new JsonObject();
 			g.addProperty("name", group.name);
+			putTrs(g, group.placement);
 			g.add("children", children);
 			rootChildren.add(addNode(g));
 		}
@@ -226,14 +227,17 @@ public final class GlbWriter {
 		JsonArray joints = new JsonArray();
 		for (int n : nodeOf) joints.add(n);
 		skin.add("joints", joints);
-		int rootJoint = -1;
+		// armature object: identity transform at the group origin, holding the bone hierarchy
+		JsonArray topJoints = new JsonArray();
 		for (int i = 0; i < rig.joints.size(); i++) {
-			if (rig.joints.get(i).parent() < 0) {
-				if (rootJoint < 0) rootJoint = nodeOf[i];
-				groupChildren.add(nodeOf[i]);
-			}
+			if (rig.joints.get(i).parent() < 0) topJoints.add(nodeOf[i]);
 		}
-		if (rootJoint >= 0) skin.addProperty("skeleton", rootJoint);
+		JsonObject armature = new JsonObject();
+		armature.addProperty("name", rig.name + "_armature");
+		armature.add("children", topJoints);
+		int armatureNode = addNode(armature);
+		groupChildren.add(armatureNode);
+		skin.addProperty("skeleton", armatureNode);
 		int skinIndex = skins.size();
 		skins.add(skin);
 

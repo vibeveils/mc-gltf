@@ -142,7 +142,8 @@ public final class ExportJob {
 
 	/** Does one unit of work. Returns false if it has to wait for the next tick. */
 	private boolean step() {
-		int[] p = parts.get(partIndex);
+		// after the last part has been handed to the writer, partIndex == parts.size() (only WAIT_WRITE runs then)
+		int[] p = partIndex < parts.size() ? parts.get(partIndex) : null;
 		switch (phase) {
 			case BLOCKS -> {
 				meshColumn(cursorX, cursorZ);
@@ -214,6 +215,9 @@ public final class ExportJob {
 				+ "_" + pos.getX() + "_" + pos.getY() + "_" + pos.getZ());
 		SubmitCapture capture = new SubmitCapture(group, textures, mesher);
 		bridge.submitBlockEntity(be, pos.getX() - min.getX(), pos.getY() - min.getY(), pos.getZ() - min.getZ(), capture);
+		// origin at the bottom centre of the block; block entities face via their own model
+		group.localize(new org.joml.Matrix4f().translation(pos.getX() - min.getX() + 0.5f, pos.getY() - min.getY(),
+				pos.getZ() - min.getZ() + 0.5f));
 		if (!group.isEmpty()) {
 			scene.groups.add(group);
 			blockEntityCount++;
@@ -232,6 +236,11 @@ public final class ExportJob {
 			Group group = new Group(idPath(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType())) + "_" + e.getId());
 			SubmitCapture capture = new SubmitCapture(group, textures, mesher);
 			bridge.submitEntity(e, e.getX() - min.getX(), e.getY() - min.getY(), e.getZ() - min.getZ(), capture);
+			// place the group at the entity's feet, turned to face where it faces; inside, the entity faces +Z
+			float yaw = e instanceof net.minecraft.world.entity.LivingEntity living ? living.yBodyRot : e.getYRot();
+			group.localize(new org.joml.Matrix4f()
+					.translation((float) (e.getX() - min.getX()), (float) (e.getY() - min.getY()), (float) (e.getZ() - min.getZ()))
+					.rotateY((float) Math.toRadians(-yaw)));
 			if (!group.isEmpty()) {
 				scene.groups.add(group);
 				entityCount++;
