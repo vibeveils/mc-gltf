@@ -70,6 +70,22 @@ public final class SceneData {
 		 * @param j  joint index for all 4 vertices, or -1 for static geometry
 		 * @param rgb tint for all 4 vertices (0xFFFFFF = none)
 		 */
+		/** Copies every quad into {@code dest} as static geometry (bone indices dropped). Call before {@link #weld}. */
+		public void appendStaticTo(Prim dest) {
+			float[] p = new float[12], t = new float[8];
+			int[] c = new int[4];
+			for (int q = 0; q < vertices / 4; q++) {
+				for (int i = 0; i < 4; i++) {
+					int v = q * 4 + i;
+					for (int k = 0; k < 3; k++) p[i * 3 + k] = pos.getFloat(v * 3 + k);
+					t[i * 2] = uv.getFloat(v * 2);
+					t[i * 2 + 1] = uv.getFloat(v * 2 + 1);
+					c[i] = color.getInt(v);
+				}
+				dest.addQuad(p, t, -1, c);
+			}
+		}
+
 		/** Applies a transform to all positions and normals (used to move geometry into a group's local space). */
 		public void transform(Matrix4f m, Matrix3f normalMatrix) {
 			Vector3f v = new Vector3f();

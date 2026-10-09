@@ -215,6 +215,24 @@ public final class ExportJob {
 				+ "_" + pos.getX() + "_" + pos.getY() + "_" + pos.getZ());
 		SubmitCapture capture = new SubmitCapture(group, textures, mesher, SkinResolver.find(be));
 		bridge.submitBlockEntity(be, pos.getX() - min.getX(), pos.getY() - min.getY(), pos.getZ() - min.getZ(), capture);
+		if (settings.simpleBlockEntities) {
+			// plain static geometry, merged into the block mesh: no node, no armature
+			int tile = Math.max(1, settings.tileSize);
+			var out = scene.tile(Math.floorDiv(pos.getX() - min.getX(), tile), Math.floorDiv(pos.getZ() - min.getZ(), tile));
+			boolean any = false;
+			for (var e : group.statics.entrySet()) {
+				e.getValue().appendStaticTo(out.computeIfAbsent(e.getKey(), k -> new SceneData.Prim()));
+				any |= e.getValue().quads > 0;
+			}
+			for (SceneData.Rig rig : group.rigs) {
+				for (var e : rig.prims.entrySet()) {
+					e.getValue().appendStaticTo(out.computeIfAbsent(e.getKey(), k -> new SceneData.Prim()));
+					any |= e.getValue().quads > 0;
+				}
+			}
+			if (any) blockEntityCount++;
+			return;
+		}
 		// origin at the bottom centre of the block; block entities face via their own model
 		group.localize(new org.joml.Matrix4f().translation(pos.getX() - min.getX() + 0.5f, pos.getY() - min.getY(),
 				pos.getZ() - min.getZ() + 0.5f));

@@ -63,6 +63,7 @@ Config**, or `/gltf config`), or with `/gltf set <option> <value>`, which also s
 | `entities` | on | Export mobs, players, item frames, boats, dropped items... |
 | `blockEntities` | on | Export chests, beds, signs, banners, skulls... |
 | `fluids` | on | Export water and lava surfaces |
+| `simpleBlockEntities` | off | Export chests, beds, signs, banners, skulls... as plain static geometry merged into the block mesh (no armature or separate node), posed as they are in-game |
 | `includePlayer` | off | Include yourself if you are inside the selection |
 | `closeEdges` | on | Keep block faces on the selection border so the model is closed. Off culls them against the real blocks outside, like the game does |
 | `rigEntities` | on | Entities as skinned meshes with a skeleton. Off exports plain static meshes |

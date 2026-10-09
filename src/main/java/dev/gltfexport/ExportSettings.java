@@ -33,6 +33,9 @@ public final class ExportSettings {
 	 */
 	public boolean closeEdges = true;
 
+	/** Export block entities (chests, beds, signs...) as plain static geometry merged into the blocks, without rigs. */
+	public boolean simpleBlockEntities = false;
+
 	// --- how to export
 	/** Export entity models as skinned meshes with a skeleton. When off they are plain static meshes. */
 	public boolean rigEntities = true;
@@ -67,6 +70,7 @@ public final class ExportSettings {
 		DESCRIPTIONS.put("entities", "Export mobs, players, item frames, boats, dropped items...");
 		DESCRIPTIONS.put("blockEntities", "Export chests, beds, signs, banners, skulls...");
 		DESCRIPTIONS.put("fluids", "Export water and lava surfaces");
+		DESCRIPTIONS.put("simpleBlockEntities", "Chests, beds, signs... as plain block geometry (no rig or separate node)");
 		DESCRIPTIONS.put("includePlayer", "Include yourself if you are inside the selection");
 		DESCRIPTIONS.put("closeEdges", "Keep block faces on the selection border (closed model)");
 		DESCRIPTIONS.put("rigEntities", "Export entities with a skeleton (skinned mesh)");
@@ -81,7 +85,7 @@ public final class ExportSettings {
 		DESCRIPTIONS.put("verboseLog", "Log render calls while capturing (troubleshooting)");
 	}
 
-	public static final String[] NAMES = {"entities", "blockEntities", "fluids", "includePlayer", "closeEdges",
+	public static final String[] NAMES = {"entities", "blockEntities", "fluids", "includePlayer", "simpleBlockEntities", "closeEdges",
 			"rigEntities", "tints", "weldEdges", "mergeFaces", "normals", "unlit", "showSelection", "verboseLog"};
 	public static final String[] INT_NAMES = {"partSize", "tileSize"};
 
@@ -122,6 +126,7 @@ public final class ExportSettings {
 			case "blockEntities" -> v -> blockEntities = v;
 			case "fluids" -> v -> fluids = v;
 			case "includePlayer" -> v -> includePlayer = v;
+			case "simpleBlockEntities" -> v -> simpleBlockEntities = v;
 			case "closeEdges" -> v -> closeEdges = v;
 			case "rigEntities" -> v -> rigEntities = v;
 			case "tints" -> v -> tints = v;
@@ -141,6 +146,7 @@ public final class ExportSettings {
 			case "blockEntities" -> () -> blockEntities;
 			case "fluids" -> () -> fluids;
 			case "includePlayer" -> () -> includePlayer;
+			case "simpleBlockEntities" -> () -> simpleBlockEntities;
 			case "closeEdges" -> () -> closeEdges;
 			case "rigEntities" -> () -> rigEntities;
 			case "tints" -> () -> tints;

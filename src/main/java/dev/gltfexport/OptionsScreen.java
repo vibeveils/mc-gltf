@@ -81,6 +81,7 @@ public final class OptionsScreen extends Screen {
 			case "blockEntities" -> "Block entities";
 			case "fluids" -> "Fluids";
 			case "includePlayer" -> "Include yourself";
+			case "simpleBlockEntities" -> "Simple block entities";
 			case "closeEdges" -> "Faces at edges";
 			case "rigEntities" -> "Entity rigs";
 			case "tints" -> "Tints (vertex colours)";
